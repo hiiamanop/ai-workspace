@@ -1,49 +1,66 @@
 import { decide as defaultDecide } from "./made-client.ts";
-import { availableCandidates as defaultAvailableCandidates } from "./candidates.ts";
+import { availableCandidates as defaultAvailableCandidates, availableToolCandidates as defaultAvailableToolCandidates } from "./candidates.ts";
 import { complete as ollamaComplete } from "./providers/ollama-client.ts";
 import { complete as deepseekComplete } from "./providers/deepseek-client.ts";
-import type { CandidateIn, DecideRequest, DecideResponse } from "./types.ts";
+import { callWebSearch } from "./mcp/searxng-client.ts";
+import { callScrape } from "./mcp/scrapling-client.ts";
+import { TOOL_DEFS } from "./tools.ts";
+import type { CandidateIn, ChatMessage, CompletionResult, DecideRequest, DecideResponse, ToolDef } from "./types.ts";
+
+const MAX_TOOL_ITERATIONS = 5;
+
+export type ToolExecutor = (args: Record<string, unknown>) => Promise<string>;
 
 export interface ChatDeps {
   decide: (request: DecideRequest) => Promise<DecideResponse>;
   availableCandidates: () => CandidateIn[];
-  completeByProvider: Record<string, (model: string, prompt: string) => Promise<string>>;
+  availableToolCandidates: () => CandidateIn[];
+  completeByProvider: Record<string, (model: string, messages: ChatMessage[], tools: ToolDef[]) => Promise<CompletionResult>>;
+  toolExecutors: Record<string, ToolExecutor>;
 }
 
 const defaultDeps: ChatDeps = {
   decide: defaultDecide,
   availableCandidates: defaultAvailableCandidates,
+  availableToolCandidates: defaultAvailableToolCandidates,
   completeByProvider: {
     "ollama-local": ollamaComplete,
     deepseek: deepseekComplete,
   },
+  toolExecutors: {
+    web_search: (args) => callWebSearch(String(args.query)),
+    scrape: (args) => callScrape(String(args.url)),
+  },
 };
+
+function decideRequest(decisionKind: DecideRequest["decision_kind"], candidates: CandidateIn[]): DecideRequest {
+  return {
+    task: { type: "chat", data_classification: "internal" },
+    org: { budget_remaining_usd: 1000, region: "us" },
+    decision_kind: decisionKind,
+    candidates,
+    policy_set: "default",
+  };
+}
 
 export async function handleChat(
   message: string,
   deps: ChatDeps = defaultDeps
-): Promise<{ selectedCandidateId: string; reply: string }> {
+): Promise<{ selectedCandidateId: string; reply: string; toolsUsed: string[] }> {
   const candidates = deps.availableCandidates();
 
-  const decision = await deps.decide({
-    task: { type: "chat", data_classification: "internal" },
-    org: { budget_remaining_usd: 1000, region: "us" },
-    decision_kind: "model_selection",
-    candidates,
-    policy_set: "default",
-  });
+  const modelDecision = await deps.decide(decideRequest("model_selection", candidates));
 
-  if (!decision.selected_candidate_id) {
+  if (!modelDecision.selected_candidate_id) {
     throw new Error("MADE returned no eligible candidate");
   }
-
-  if (decision.requires_human_approval) {
+  if (modelDecision.requires_human_approval) {
     throw new Error("MADE requires human approval for this request");
   }
 
-  const selected = candidates.find((c) => c.id === decision.selected_candidate_id);
+  const selected = candidates.find((c) => c.id === modelDecision.selected_candidate_id);
   if (!selected) {
-    throw new Error(`MADE selected unknown candidate id ${decision.selected_candidate_id}`);
+    throw new Error(`MADE selected unknown candidate id ${modelDecision.selected_candidate_id}`);
   }
 
   const complete = deps.completeByProvider[selected.vendor];
@@ -51,7 +68,43 @@ export async function handleChat(
     throw new Error(`no provider client registered for vendor ${selected.vendor}`);
   }
 
-  const reply = await complete(selected.id, message);
+  const toolCandidates = deps.availableToolCandidates();
+  const toolDecision = await deps.decide(decideRequest("tool_selection", toolCandidates));
+  const allowedToolIds = new Set(toolDecision.ranking.map((r) => r.id));
+  const tools: ToolDef[] = toolCandidates
+    .filter((c) => allowedToolIds.has(c.id))
+    .map((c) => TOOL_DEFS[c.id])
+    .filter((t): t is ToolDef => Boolean(t));
 
-  return { selectedCandidateId: selected.id, reply };
+  const messages: ChatMessage[] = [{ role: "user", content: message }];
+  const toolsUsed: string[] = [];
+
+  for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+    const result = await complete(selected.id, messages, tools);
+
+    if (result.toolCalls.length === 0) {
+      return { selectedCandidateId: selected.id, reply: result.content ?? "", toolsUsed };
+    }
+
+    messages.push({ role: "assistant", content: result.content, tool_calls: result.toolCalls });
+
+    for (const call of result.toolCalls) {
+      const executor = deps.toolExecutors[call.function.name];
+      let toolResult: string;
+      if (!executor) {
+        toolResult = `tool ${call.function.name} is not available`;
+      } else {
+        try {
+          const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+          toolResult = await executor(args);
+          toolsUsed.push(call.function.name);
+        } catch (err) {
+          toolResult = `${call.function.name} failed: ${(err as Error).message}`;
+        }
+      }
+      messages.push({ role: "tool", content: toolResult, tool_call_id: call.id, name: call.function.name });
+    }
+  }
+
+  throw new Error("tool-calling loop exceeded maximum iterations");
 }
