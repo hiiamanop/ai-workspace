@@ -57,3 +57,25 @@ test("handleChat() throws when MADE selects no candidate", async () => {
     /MADE returned no eligible candidate/
   );
 });
+
+test("handleChat() throws when MADE requires human approval", async () => {
+  await assert.rejects(
+    () =>
+      handleChat("hello", {
+        decide: async () => ({
+          decision_id: "d1",
+          selected_candidate_id: "gemma4:12b",
+          requires_human_approval: true,
+          ranking: [],
+          excluded: [],
+          technique_used: "topsis",
+          policy_version: "1",
+        }),
+        availableCandidates: () => [
+          { id: "gemma4:12b", vendor: "ollama-local", kind: "model", cost_per_1k_tokens: 0, scores: {} },
+        ],
+        completeByProvider: {},
+      }),
+    /MADE requires human approval for this request/
+  );
+});

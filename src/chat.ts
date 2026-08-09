@@ -37,6 +37,10 @@ export async function handleChat(
     throw new Error("MADE returned no eligible candidate");
   }
 
+  if (decision.requires_human_approval) {
+    throw new Error("MADE requires human approval for this request");
+  }
+
   const selected = candidates.find((c) => c.id === decision.selected_candidate_id);
   if (!selected) {
     throw new Error(`MADE selected unknown candidate id ${decision.selected_candidate_id}`);
