@@ -20,7 +20,7 @@ test("callWebSearch() connects, calls the web_search tool with the query, and cl
 
   const result = await callWebSearch("weather in Jakarta", fakeConnect);
 
-  assert.equal(capturedName, "web_search");
+  assert.equal(capturedName, "searxng_web_search");
   assert.deepEqual(capturedArgs, { query: "weather in Jakarta" });
   assert.equal(result, "search results text");
   assert.equal(closed, true);

@@ -38,7 +38,7 @@ export async function callWebSearch(
 ): Promise<string> {
   const connection = await connect();
   try {
-    return await connection.callTool("web_search", { query });
+    return await connection.callTool("searxng_web_search", { query });
   } finally {
     await connection.close();
   }
