@@ -1,12 +1,20 @@
+import type { ChatMessage, ToolDef, CompletionResult } from "../types.ts";
+
 export async function complete(
   model: string,
-  prompt: string,
+  messages: ChatMessage[],
+  tools: ToolDef[] = [],
   apiKey: string = process.env.DEEPSEEK_API_KEY ?? "",
   baseUrl: string = process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
   fetchImpl: typeof fetch = fetch
-): Promise<string> {
+): Promise<CompletionResult> {
   if (!apiKey) {
     throw new Error("DEEPSEEK_API_KEY not set");
+  }
+
+  const body: Record<string, unknown> = { model, messages };
+  if (tools.length > 0) {
+    body.tools = tools;
   }
 
   const response = await fetchImpl(`${baseUrl}/v1/chat/completions`, {
@@ -15,13 +23,16 @@ export async function complete(
       "content-type": "application/json",
       authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }] }),
+    body: JSON.stringify(body),
   });
 
   if (response.status !== 200) {
     throw new Error(`DeepSeek API returned ${response.status}: ${await response.text()}`);
   }
 
-  const body = (await response.json()) as { choices: { message: { content: string } }[] };
-  return body.choices[0].message.content;
+  const parsed = (await response.json()) as {
+    choices: { message: { content: string | null; tool_calls?: CompletionResult["toolCalls"] } }[];
+  };
+  const message = parsed.choices[0].message;
+  return { content: message.content ?? "", toolCalls: message.tool_calls ?? [] };
 }
