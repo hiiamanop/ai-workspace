@@ -4,7 +4,7 @@ import { createServer } from "../src/server.ts";
 
 test("POST /api/chat returns the handler's result as JSON", async () => {
   const server = createServer(async (message: string) => ({
-    selectedCandidateId: "gemma4-12b",
+    selectedCandidateId: "gemma4:12b",
     reply: `echo: ${message}`,
   }));
   server.listen(0);
@@ -18,7 +18,7 @@ test("POST /api/chat returns the handler's result as JSON", async () => {
   const body = await res.json();
 
   assert.equal(res.status, 200);
-  assert.deepEqual(body, { selectedCandidateId: "gemma4-12b", reply: "echo: hi" });
+  assert.deepEqual(body, { selectedCandidateId: "gemma4:12b", reply: "echo: hi" });
   server.close();
 });
 

@@ -6,9 +6,9 @@ import type { DecideRequest, DecideResponse } from "../src/types.ts";
 test("decide() posts the request to MADE_URL/decide and returns the parsed response", async () => {
   const fakeResponse: DecideResponse = {
     decision_id: "abc-123",
-    selected_candidate_id: "gemma4-12b",
+    selected_candidate_id: "gemma4:12b",
     requires_human_approval: false,
-    ranking: [{ id: "gemma4-12b", score: 0.9 }],
+    ranking: [{ id: "gemma4:12b", score: 0.9 }],
     excluded: [],
     technique_used: "topsis",
     policy_version: "1",
@@ -30,7 +30,7 @@ test("decide() posts the request to MADE_URL/decide and returns the parsed respo
     org: { budget_remaining_usd: 10, region: "us" },
     decision_kind: "model_selection",
     candidates: [
-      { id: "gemma4-12b", vendor: "ollama-local", kind: "model", cost_per_1k_tokens: 0, scores: { cost: 0, quality: 0.75, latency: 9000, business_risk: 0.1 } },
+      { id: "gemma4:12b", vendor: "ollama-local", kind: "model", cost_per_1k_tokens: 0, scores: { cost: 0, quality: 0.75, latency: 9000, business_risk: 0.1 } },
     ],
     policy_set: "default",
   };

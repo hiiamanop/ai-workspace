@@ -5,7 +5,7 @@ import type { CandidateIn } from "./types.ts";
 // (like MADE's own score_cache) once this app has real traffic to learn from.
 
 const OLLAMA_CANDIDATE: CandidateIn = {
-  id: "gemma4-12b",
+  id: "gemma4:12b",
   vendor: "ollama-local",
   kind: "model",
   cost_per_1k_tokens: 0,
