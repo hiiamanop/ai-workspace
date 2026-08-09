@@ -58,3 +58,17 @@ test("POST /api/chat returns 500 with the error message when the handler throws"
   assert.equal(body.error, "MADE returned no eligible candidate");
   server.close();
 });
+
+test("GET / serves the index page", async () => {
+  const server = createServer(async () => ({ selectedCandidateId: "x", reply: "y" }));
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const res = await fetch(`http://localhost:${port}/`);
+  const body = await res.text();
+
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type") ?? "", /text\/html/);
+  assert.ok(body.length > 0);
+  server.close();
+});

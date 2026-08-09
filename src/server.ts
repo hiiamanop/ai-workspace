@@ -9,45 +9,53 @@ const PUBLIC_DIR = path.join(__dirname, "..", "public");
 
 export function createServer(handleChatFn: typeof handleChat = handleChat): http.Server {
   return http.createServer(async (req, res) => {
-    if (req.method === "POST" && req.url === "/api/chat") {
-      let raw = "";
-      for await (const chunk of req) raw += chunk;
+    try {
+      if (req.method === "POST" && req.url === "/api/chat") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const raw = Buffer.concat(chunks).toString("utf8");
 
-      let message: unknown;
-      try {
-        message = JSON.parse(raw).message;
-      } catch {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "invalid JSON body" }));
+        let message: unknown;
+        try {
+          message = JSON.parse(raw).message;
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid JSON body" }));
+          return;
+        }
+
+        if (typeof message !== "string" || message.length === 0) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "message field is required" }));
+          return;
+        }
+
+        try {
+          const result = await handleChatFn(message);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (err) {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: (err as Error).message }));
+        }
         return;
       }
 
-      if (typeof message !== "string" || message.length === 0) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "message field is required" }));
+      if (req.method === "GET" && (req.url === "/" || req.url === "/index.html")) {
+        const html = await readFile(path.join(PUBLIC_DIR, "index.html"), "utf-8");
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(html);
         return;
       }
 
-      try {
-        const result = await handleChatFn(message);
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify(result));
-      } catch (err) {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "not found" }));
+    } catch (err) {
+      if (!res.headersSent) {
         res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: (err as Error).message }));
+        res.end(JSON.stringify({ error: "internal server error" }));
       }
-      return;
     }
-
-    if (req.method === "GET" && (req.url === "/" || req.url === "/index.html")) {
-      const html = await readFile(path.join(PUBLIC_DIR, "index.html"), "utf-8");
-      res.writeHead(200, { "content-type": "text/html" });
-      res.end(html);
-      return;
-    }
-
-    res.writeHead(404, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: "not found" }));
   });
 }
 
