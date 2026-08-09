@@ -26,7 +26,7 @@ services:
 
   scrapling:
     image: python:3.12-slim
-    command: sh -c "pip install --no-cache-dir 'scrapling[ai]' 'mcp<2.0' && scrapling mcp --http --host 0.0.0.0 --port 8000"
+    command: sh -c "pip install --no-cache-dir 'scrapling[ai]' 'mcp<2.0' && python -m playwright install --with-deps chromium && scrapling mcp --http --host 0.0.0.0 --port 8000"
     ports:
       - "8000:8000"
 
