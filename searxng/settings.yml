@@ -1,0 +1,7 @@
+use_default_settings: true
+server:
+  secret_key: "ai-workspace-dev-secret-change-me"
+search:
+  formats:
+    - html
+    - json
