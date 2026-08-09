@@ -200,3 +200,31 @@ test("handleChat() throws when MADE requires human approval", async () => {
     /MADE requires human approval for this request/
   );
 });
+
+test("handleChat() throws when MADE requires human approval for tool_selection", async () => {
+  await assert.rejects(
+    () =>
+      handleChat("hello", {
+        ...baseDeps,
+        decide: async (request) =>
+          request.decision_kind === "model_selection"
+            ? modelDecision
+            : {
+                decision_id: "d2",
+                selected_candidate_id: "web_search",
+                requires_human_approval: true,
+                ranking: [],
+                excluded: [],
+                technique_used: "topsis",
+                policy_version: "1",
+              },
+        completeByProvider: {
+          "ollama-local": async () => {
+            throw new Error("should not be called");
+          },
+        },
+        toolExecutors: {},
+      }),
+    /MADE requires human approval for this request/
+  );
+});

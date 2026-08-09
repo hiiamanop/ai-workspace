@@ -70,6 +70,9 @@ export async function handleChat(
 
   const toolCandidates = deps.availableToolCandidates();
   const toolDecision = await deps.decide(decideRequest("tool_selection", toolCandidates));
+  if (toolDecision.requires_human_approval) {
+    throw new Error("MADE requires human approval for this request");
+  }
   const allowedToolIds = new Set(toolDecision.ranking.map((r) => r.id));
   const tools: ToolDef[] = toolCandidates
     .filter((c) => allowedToolIds.has(c.id))

@@ -22,15 +22,15 @@ services:
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
 
   scrapling:
     image: python:3.12-slim
-    command: sh -c "pip install --no-cache-dir 'scrapling[ai]' 'mcp<2.0' && python -m playwright install --with-deps chromium && scrapling mcp --http --host 0.0.0.0 --port 8000"
+    command: sh -c "pip install --no-cache-dir 'scrapling[ai]==0.4.12' 'mcp<2.0' && python -m playwright install --with-deps chromium && scrapling mcp --http --host 0.0.0.0 --port 8000"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
   made:
     build: ../MODE
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
