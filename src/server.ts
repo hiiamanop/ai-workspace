@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleChat } from "./chat.ts";
+import { handleAgentTurn } from "./agent-turn.ts";
+import type { AgentTurnRequest } from "./agent-turn.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST_DIR = path.join(__dirname, "..", "client", "dist");
@@ -57,6 +59,37 @@ export function createServer(handleChatFn: typeof handleChat = handleChat): http
 
         try {
           const result = await handleChatFn(message);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (err) {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: (err as Error).message }));
+        }
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/api/agent-turn") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const raw = Buffer.concat(chunks).toString("utf8");
+
+        let body: AgentTurnRequest;
+        try {
+          body = JSON.parse(raw) as AgentTurnRequest;
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid JSON body" }));
+          return;
+        }
+
+        if (typeof body.system !== "string" || !Array.isArray(body.messages) || !Array.isArray(body.tools)) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "system, messages, and tools fields are required" }));
+          return;
+        }
+
+        try {
+          const result = await handleAgentTurn(body);
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify(result));
         } catch (err) {
