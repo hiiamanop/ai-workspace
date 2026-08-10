@@ -58,7 +58,7 @@ export function createMadeTransport(): AgentTransport {
         }
       })();
 
-      return { cancel: () => { cancelled = true; } };
+      return { cancel: () => { cancelled = true; callbacks.onDone(); } };
     },
   };
 }
