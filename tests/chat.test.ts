@@ -228,3 +228,121 @@ test("handleChat() throws when MADE requires human approval for tool_selection",
     /MADE requires human approval for this request/
   );
 });
+
+test("handleChat() truncates tool results longer than 8000 chars before feeding them back to the model", async () => {
+  const longResult = "x".repeat(9000);
+  let capturedToolContent = "";
+  let callCount = 0;
+  const deps: ChatDeps = {
+    ...baseDeps,
+    decide: async (request) =>
+      request.decision_kind === "model_selection" ? modelDecision : allowAllToolsDecision(),
+    completeByProvider: {
+      "ollama-local": async (_model, messages) => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            content: "",
+            toolCalls: [{ id: "call_1", type: "function", function: { name: "web_search", arguments: "{}" } }],
+          };
+        }
+        const toolMessage = messages.find((m) => m.role === "tool");
+        capturedToolContent = toolMessage?.content ?? "";
+        return { content: "done", toolCalls: [] };
+      },
+      deepseek: async () => {
+        throw new Error("should not be called");
+      },
+    },
+    toolExecutors: {
+      web_search: async () => longResult,
+    },
+  };
+
+  await handleChat("search something huge", deps);
+
+  assert.equal(capturedToolContent.length, 8000 + "...[truncated, 9000 chars total]".length);
+  assert.ok(capturedToolContent.startsWith("x".repeat(8000)));
+  assert.ok(capturedToolContent.endsWith("...[truncated, 9000 chars total]"));
+});
+
+test("handleChat() does not alter tool results at or under 8000 chars", async () => {
+  const shortResult = "y".repeat(8000);
+  let capturedToolContent = "";
+  let callCount = 0;
+  const deps: ChatDeps = {
+    ...baseDeps,
+    decide: async (request) =>
+      request.decision_kind === "model_selection" ? modelDecision : allowAllToolsDecision(),
+    completeByProvider: {
+      "ollama-local": async (_model, messages) => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            content: "",
+            toolCalls: [{ id: "call_1", type: "function", function: { name: "web_search", arguments: "{}" } }],
+          };
+        }
+        const toolMessage = messages.find((m) => m.role === "tool");
+        capturedToolContent = toolMessage?.content ?? "";
+        return { content: "done", toolCalls: [] };
+      },
+      deepseek: async () => {
+        throw new Error("should not be called");
+      },
+    },
+    toolExecutors: {
+      web_search: async () => shortResult,
+    },
+  };
+
+  await handleChat("search something", deps);
+
+  assert.equal(capturedToolContent, shortResult);
+});
+
+test("handleChat() returns the last non-empty content with a note when the tool loop hits the iteration cap", async () => {
+  const deps: ChatDeps = {
+    ...baseDeps,
+    decide: async (request) =>
+      request.decision_kind === "model_selection" ? modelDecision : allowAllToolsDecision(),
+    completeByProvider: {
+      "ollama-local": async () => ({
+        content: "partial thought",
+        toolCalls: [{ id: "call_x", type: "function", function: { name: "web_search", arguments: "{}" } }],
+      }),
+      deepseek: async () => {
+        throw new Error("should not be called");
+      },
+    },
+    toolExecutors: {
+      web_search: async () => "result",
+    },
+  };
+
+  const result = await handleChat("loop forever", deps);
+
+  assert.equal(result.reply, "partial thought\n\n[tool loop limit reached — response may be incomplete]");
+});
+
+test("handleChat() still throws when the tool loop hits the iteration cap with no content ever produced", async () => {
+  const deps: ChatDeps = {
+    ...baseDeps,
+    decide: async (request) =>
+      request.decision_kind === "model_selection" ? modelDecision : allowAllToolsDecision(),
+    completeByProvider: {
+      "ollama-local": async () => ({
+        content: "",
+        toolCalls: [{ id: "call_x", type: "function", function: { name: "web_search", arguments: "{}" } }],
+      }),
+      deepseek: async () => {
+        throw new Error("should not be called");
+      },
+    },
+    toolExecutors: {
+      web_search: async () => "result",
+    },
+  };
+
+  await assert.rejects(() => handleChat("loop forever", deps), /tool-calling loop exceeded maximum iterations/);
+});

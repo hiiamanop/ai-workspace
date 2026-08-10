@@ -8,6 +8,7 @@ import { TOOL_DEFS } from "./tools.ts";
 import type { CandidateIn, ChatMessage, CompletionResult, DecideRequest, DecideResponse, ToolDef } from "./types.ts";
 
 const MAX_TOOL_ITERATIONS = 5;
+const MAX_TOOL_RESULT_CHARS = 8000;
 
 export type ToolExecutor = (args: Record<string, unknown>) => Promise<string>;
 
@@ -41,6 +42,13 @@ function decideRequest(decisionKind: DecideRequest["decision_kind"], candidates:
     candidates,
     policy_set: "default",
   };
+}
+
+function truncateToolResult(result: string): string {
+  if (result.length <= MAX_TOOL_RESULT_CHARS) {
+    return result;
+  }
+  return `${result.slice(0, MAX_TOOL_RESULT_CHARS)}...[truncated, ${result.length} chars total]`;
 }
 
 export async function handleChat(
@@ -81,9 +89,14 @@ export async function handleChat(
 
   const messages: ChatMessage[] = [{ role: "user", content: message }];
   const toolsUsed: string[] = [];
+  let lastNonEmptyContent: string | null = null;
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const result = await complete(selected.id, messages, tools);
+
+    if (result.content) {
+      lastNonEmptyContent = result.content;
+    }
 
     if (result.toolCalls.length === 0) {
       return { selectedCandidateId: selected.id, reply: result.content ?? "", toolsUsed };
@@ -105,8 +118,16 @@ export async function handleChat(
           toolResult = `${call.function.name} failed: ${(err as Error).message}`;
         }
       }
-      messages.push({ role: "tool", content: toolResult, tool_call_id: call.id, name: call.function.name });
+      messages.push({ role: "tool", content: truncateToolResult(toolResult), tool_call_id: call.id, name: call.function.name });
     }
+  }
+
+  if (lastNonEmptyContent) {
+    return {
+      selectedCandidateId: selected.id,
+      reply: `${lastNonEmptyContent}\n\n[tool loop limit reached — response may be incomplete]`,
+      toolsUsed,
+    };
   }
 
   throw new Error("tool-calling loop exceeded maximum iterations");
