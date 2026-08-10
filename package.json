@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "dev:client": "vite",
-    "build": "tsc",
+    "build": "tsc && vite build",
     "start": "node dist/server.js",
     "test": "node --import tsx --test 'tests/**/*.test.ts'"
   },

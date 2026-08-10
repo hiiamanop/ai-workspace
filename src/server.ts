@@ -5,7 +5,32 @@ import { fileURLToPath } from "node:url";
 import { handleChat } from "./chat.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PUBLIC_DIR = path.join(__dirname, "..", "public");
+const CLIENT_DIST_DIR = path.join(__dirname, "..", "client", "dist");
+
+const CONTENT_TYPES: Record<string, string> = {
+  ".html": "text/html",
+  ".js": "text/javascript",
+  ".css": "text/css",
+  ".svg": "image/svg+xml",
+  ".json": "application/json",
+  ".woff2": "font/woff2",
+};
+
+async function serveStatic(res: http.ServerResponse, relativePath: string): Promise<boolean> {
+  const filePath = path.join(CLIENT_DIST_DIR, relativePath);
+  if (!filePath.startsWith(CLIENT_DIST_DIR)) {
+    return false;
+  }
+  try {
+    const data = await readFile(filePath);
+    const ext = path.extname(filePath);
+    res.writeHead(200, { "content-type": CONTENT_TYPES[ext] ?? "application/octet-stream" });
+    res.end(data);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function createServer(handleChatFn: typeof handleChat = handleChat): http.Server {
   return http.createServer(async (req, res) => {
@@ -41,11 +66,11 @@ export function createServer(handleChatFn: typeof handleChat = handleChat): http
         return;
       }
 
-      if (req.method === "GET" && (req.url === "/" || req.url === "/index.html")) {
-        const html = await readFile(path.join(PUBLIC_DIR, "index.html"), "utf-8");
-        res.writeHead(200, { "content-type": "text/html" });
-        res.end(html);
-        return;
+      if (req.method === "GET") {
+        const urlPath = req.url === "/" ? "/chat.html" : req.url === "/document" ? "/document.html" : (req.url ?? "");
+        if (await serveStatic(res, urlPath)) {
+          return;
+        }
       }
 
       res.writeHead(404, { "content-type": "application/json" });
