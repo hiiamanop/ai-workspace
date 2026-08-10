@@ -3,13 +3,8 @@ services:
     build: .
     ports:
       - "127.0.0.1:3000:3000"
-    environment:
-      MADE_URL: http://made:8000
-      SEARXNG_URL: http://searxng:8080
-      SCRAPLING_URL: http://scrapling:8000/mcp
-      OLLAMA_BASE_URL: http://host.docker.internal:11434
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+    env_file:
+      - .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

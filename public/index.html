@@ -43,7 +43,14 @@
       }
       let line = `[${body.selectedCandidateId}] ${body.reply}\n`;
       if (body.toolsUsed && body.toolsUsed.length > 0) {
-        line += `[tools: ${body.toolsUsed.join(", ")}]\n`;
+        const counts = {};
+        for (const name of body.toolsUsed) {
+          counts[name] = (counts[name] || 0) + 1;
+        }
+        const summary = Object.entries(counts)
+          .map(([name, count]) => (count > 1 ? `${name} ×${count}` : name))
+          .join(", ");
+        line += `[tools: ${summary}]\n`;
       }
       log.textContent += line + "\n";
     });
