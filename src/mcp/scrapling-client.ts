@@ -27,6 +27,9 @@ const BLOCKED_HOSTNAMES = new Set([
   "made",
   "host.docker.internal",
   "localhost",
+  "metadata.google.internal",
+  "metadata",
+  "instance-data",
 ]);
 
 function isPrivateIPv4(hostname: string): boolean {

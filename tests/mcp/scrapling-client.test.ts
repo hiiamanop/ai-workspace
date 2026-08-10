@@ -107,6 +107,19 @@ test("callScrape() rejects cloud metadata (169.254.*) and 0.0.0.0-range addresse
   assert.equal(connected, false);
 });
 
+test("callScrape() rejects known cloud metadata hostnames", async () => {
+  let connected = false;
+  const fakeConnect = async () => {
+    connected = true;
+    return { callTool: async () => "", close: async () => {} };
+  };
+
+  await assert.rejects(() => callScrape("http://metadata.google.internal/", fakeConnect), /internal\/private host/);
+  await assert.rejects(() => callScrape("http://metadata/", fakeConnect), /internal\/private host/);
+  await assert.rejects(() => callScrape("http://instance-data/", fakeConnect), /internal\/private host/);
+  assert.equal(connected, false);
+});
+
 test("callScrape() rejects IPv6 literal hosts", async () => {
   let connected = false;
   const fakeConnect = async () => {
