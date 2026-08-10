@@ -346,3 +346,46 @@ test("handleChat() still throws when the tool loop hits the iteration cap with n
 
   await assert.rejects(() => handleChat("loop forever", deps), /tool-calling loop exceeded maximum iterations/);
 });
+
+test("handleChat() does not split a surrogate pair when truncating a tool result", async () => {
+  const emoji = "\u{1F600}"; // a single Unicode code point, 2 UTF-16 code units
+  const longResult = "x".repeat(7999) + emoji + "y".repeat(1000);
+  let capturedToolContent = "";
+  let callCount = 0;
+  const deps: ChatDeps = {
+    ...baseDeps,
+    decide: async (request) =>
+      request.decision_kind === "model_selection" ? modelDecision : allowAllToolsDecision(),
+    completeByProvider: {
+      "ollama-local": async (_model, messages) => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            content: "",
+            toolCalls: [{ id: "call_1", type: "function", function: { name: "web_search", arguments: "{}" } }],
+          };
+        }
+        const toolMessage = messages.find((m) => m.role === "tool");
+        capturedToolContent = toolMessage?.content ?? "";
+        return { content: "done", toolCalls: [] };
+      },
+      deepseek: async () => {
+        throw new Error("should not be called");
+      },
+    },
+    toolExecutors: {
+      web_search: async () => longResult,
+    },
+  };
+
+  await handleChat("search something with emoji at the truncation boundary", deps);
+
+  const markerIndex = capturedToolContent.indexOf("...[truncated");
+  const truncatedPortion = capturedToolContent.slice(0, markerIndex);
+
+  // The cut must land BEFORE the emoji's high surrogate (at index 7999),
+  // not in the middle of it (which an 8000-char slice would do).
+  assert.equal(truncatedPortion, "x".repeat(7999));
+  assert.equal(truncatedPortion.length, 7999);
+  assert.ok(capturedToolContent.endsWith(`...[truncated, ${longResult.length} chars total]`));
+});

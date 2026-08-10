@@ -48,7 +48,12 @@ function truncateToolResult(result: string): string {
   if (result.length <= MAX_TOOL_RESULT_CHARS) {
     return result;
   }
-  return `${result.slice(0, MAX_TOOL_RESULT_CHARS)}...[truncated, ${result.length} chars total]`;
+  let cut = MAX_TOOL_RESULT_CHARS;
+  const code = result.charCodeAt(cut - 1);
+  if (code >= 0xd800 && code <= 0xdbff) {
+    cut -= 1;
+  }
+  return `${result.slice(0, cut)}...[truncated, ${result.length} chars total]`;
 }
 
 export async function handleChat(
