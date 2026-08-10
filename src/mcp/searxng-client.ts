@@ -10,7 +10,7 @@ async function defaultConnect(): Promise<McpToolConnection> {
   const searxngUrl = process.env.SEARXNG_URL ?? "http://searxng:8080";
   const transport = new StdioClientTransport({
     command: "npx",
-    args: ["-y", "mcp-searxng"],
+    args: ["mcp-searxng"],
     env: { ...process.env, SEARXNG_URL: searxngUrl },
   });
   const client = new Client({ name: "ai-workspace", version: "0.1.0" }, { capabilities: {} });
