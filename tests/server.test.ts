@@ -59,9 +59,10 @@ test("POST /api/chat returns 500 with the error message when the handler throws"
   server.close();
 });
 
-test("GET / serves the index page", async () => {
+test("GET / serves the index page", async (t) => {
   const server = createServer(async () => ({ selectedCandidateId: "x", reply: "y" }));
   server.listen(0);
+  t.after(() => server.close());
   const port = (server.address() as { port: number }).port;
 
   const res = await fetch(`http://localhost:${port}/`);
@@ -70,5 +71,4 @@ test("GET / serves the index page", async () => {
   assert.equal(res.status, 200);
   assert.match(res.headers.get("content-type") ?? "", /text\/html/);
   assert.ok(body.length > 0);
-  server.close();
 });

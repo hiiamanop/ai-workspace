@@ -18,7 +18,7 @@ const CONTENT_TYPES: Record<string, string> = {
 
 async function serveStatic(res: http.ServerResponse, relativePath: string): Promise<boolean> {
   const filePath = path.join(CLIENT_DIST_DIR, relativePath);
-  if (!filePath.startsWith(CLIENT_DIST_DIR)) {
+  if (filePath !== CLIENT_DIST_DIR && !filePath.startsWith(CLIENT_DIST_DIR + path.sep)) {
     return false;
   }
   try {
@@ -67,7 +67,8 @@ export function createServer(handleChatFn: typeof handleChat = handleChat): http
       }
 
       if (req.method === "GET") {
-        const urlPath = req.url === "/" ? "/chat.html" : req.url === "/document" ? "/document.html" : (req.url ?? "");
+        const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+        const urlPath = pathname === "/" ? "/chat.html" : pathname === "/document" ? "/document.html" : pathname;
         if (await serveStatic(res, urlPath)) {
           return;
         }
