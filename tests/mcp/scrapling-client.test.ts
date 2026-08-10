@@ -75,3 +75,46 @@ test("callScrape() rejects URLs targeting private IPv4 ranges without connecting
   await assert.rejects(() => callScrape("http://127.0.0.1/", fakeConnect), /internal\/private host/);
   assert.equal(connected, false);
 });
+
+test("callScrape() rejects URLs whose numeric-encoded IPv4 host normalizes to a private address", async () => {
+  let connected = false;
+  const fakeConnect = async () => {
+    connected = true;
+    return { callTool: async () => "", close: async () => {} };
+  };
+
+  // These all normalize to 127.0.0.1 via the WHATWG URL parser before our
+  // code ever inspects the hostname — this test guards against that
+  // normalization behavior changing in a future Node/URL-spec version.
+  await assert.rejects(() => callScrape("http://2130706433/", fakeConnect), /internal\/private host/);
+  await assert.rejects(() => callScrape("http://0x7f.0.0.1/", fakeConnect), /internal\/private host/);
+  await assert.rejects(() => callScrape("http://0177.0.0.1/", fakeConnect), /internal\/private host/);
+  await assert.rejects(() => callScrape("http://127.1/", fakeConnect), /internal\/private host/);
+  assert.equal(connected, false);
+});
+
+test("callScrape() rejects cloud metadata (169.254.*) and 0.0.0.0-range addresses", async () => {
+  let connected = false;
+  const fakeConnect = async () => {
+    connected = true;
+    return { callTool: async () => "", close: async () => {} };
+  };
+
+  await assert.rejects(() => callScrape("http://169.254.169.254/", fakeConnect), /internal\/private host/);
+  await assert.rejects(() => callScrape("http://169.254.1.1/", fakeConnect), /internal\/private host/);
+  await assert.rejects(() => callScrape("http://0.0.0.0/", fakeConnect), /internal\/private host/);
+  await assert.rejects(() => callScrape("http://0/", fakeConnect), /internal\/private host/);
+  assert.equal(connected, false);
+});
+
+test("callScrape() rejects IPv6 literal hosts", async () => {
+  let connected = false;
+  const fakeConnect = async () => {
+    connected = true;
+    return { callTool: async () => "", close: async () => {} };
+  };
+
+  await assert.rejects(() => callScrape("http://[::1]/", fakeConnect), /IPv6 literal/);
+  await assert.rejects(() => callScrape("http://[::ffff:127.0.0.1]/", fakeConnect), /IPv6 literal/);
+  assert.equal(connected, false);
+});
