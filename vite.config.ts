@@ -12,6 +12,14 @@ export default defineConfig({
     proxy: {
       "/api": "http://localhost:3000",
     },
+    fs: {
+      allow: [
+        resolve(__dirname, "client"),
+        resolve(__dirname, "genoffice/apps/docs/src/renderer"),
+        resolve(__dirname, "genoffice/node_modules"),
+        resolve(__dirname, "genoffice/packages"),
+      ],
+    },
   },
   build: {
     outDir: "dist",

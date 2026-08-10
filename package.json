@@ -21,8 +21,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@univerjs/preset-docs-core": "^0.25.1",
-    "@univerjs/presets": "^0.25.1",
     "mcp-searxng": "^1.14.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
