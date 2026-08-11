@@ -1,0 +1,6 @@
+version: 1
+weights:
+  cost: 0.25
+  quality: 0.5
+  latency: 0.15
+  business_risk: 0.1

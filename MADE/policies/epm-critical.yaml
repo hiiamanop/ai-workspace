@@ -1,0 +1,15 @@
+version: 1
+objectives:
+  - name: cost
+    direction: minimize
+    weight: 0.1
+  - name: quality
+    direction: maximize
+    weight: 0.7
+  - name: latency
+    direction: minimize
+    weight: 0.1
+  - name: business_risk
+    direction: minimize
+    weight: 0.1
+technique: topsis
