@@ -20,6 +20,12 @@ export function createMadeTransport(): AgentTransport {
   return {
     stream(request, callbacks) {
       let cancelled = false;
+      let done = false;
+      const finish = (fn: () => void) => {
+        if (done) return;
+        done = true;
+        fn();
+      };
 
       (async () => {
         try {
@@ -33,7 +39,7 @@ export function createMadeTransport(): AgentTransport {
 
           if (!res.ok) {
             const body = await res.json().catch(() => ({ error: `request failed: ${res.status}` }));
-            if (!cancelled) callbacks.onError(body.error ?? `request failed: ${res.status}`);
+            finish(() => callbacks.onError(body.error ?? `request failed: ${res.status}`));
             return;
           }
 
@@ -45,20 +51,20 @@ export function createMadeTransport(): AgentTransport {
 
           if (data.type === "text") {
             if (data.text) callbacks.onDelta(data.text);
-            if (!cancelled) callbacks.onDone();
+            finish(() => callbacks.onDone());
           } else if (data.type === "tool_calls") {
             if (data.text) callbacks.onDelta(data.text);
             for (const call of data.calls) callbacks.onToolCall(call);
-            if (!cancelled) callbacks.onDone();
+            finish(() => callbacks.onDone());
           } else {
-            if (!cancelled) callbacks.onError("unexpected response shape from /api/agent-turn");
+            finish(() => callbacks.onError("unexpected response shape from /api/agent-turn"));
           }
         } catch (err) {
-          if (!cancelled) callbacks.onError((err as Error).message);
+          finish(() => callbacks.onError((err as Error).message));
         }
       })();
 
-      return { cancel: () => { cancelled = true; callbacks.onDone(); } };
+      return { cancel: () => { cancelled = true; finish(() => callbacks.onDone()); } };
     },
   };
 }
