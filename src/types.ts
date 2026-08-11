@@ -1,6 +1,7 @@
 export interface TaskIn {
   type: string;
   data_classification: "public" | "internal" | "confidential" | "restricted";
+  estimated_context_tokens?: number;
 }
 
 export interface OrgIn {
@@ -14,6 +15,7 @@ export interface CandidateIn {
   kind: "model" | "tool";
   cost_per_1k_tokens: number;
   scores: Record<string, number>;
+  context_window_tokens?: number;
 }
 
 export interface DecideRequest {
