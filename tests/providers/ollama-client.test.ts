@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { complete } from "../../src/providers/ollama-client.ts";
+import { complete, completeStream } from "../../src/providers/ollama-client.ts";
 import type { ChatMessage } from "../../src/types.ts";
 
 test("complete() posts messages (and tools, if given) to {baseUrl}/v1/chat/completions", async () => {
@@ -43,5 +43,87 @@ test("complete() throws on non-200 response", async () => {
   await assert.rejects(
     () => complete("gemma4:12b", [{ role: "user", content: "hi" }], [], "http://ollama.test", fakeFetch),
     /Ollama API returned 500/
+  );
+});
+
+function sseResponse(lines: string[]): Response {
+  const body = lines.map((l) => `data: ${l}\n\n`).join("") + "data: [DONE]\n\n";
+  return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
+test("completeStream() forwards content deltas via onDelta as they arrive", async () => {
+  const chunks = [
+    JSON.stringify({ choices: [{ delta: { content: "Hel" } }] }),
+    JSON.stringify({ choices: [{ delta: { content: "lo" } }] }),
+    JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] }),
+  ];
+  const fakeFetch: typeof fetch = async () => sseResponse(chunks);
+
+  const deltas: string[] = [];
+  const result = await completeStream(
+    "gemma4:12b",
+    [{ role: "user", content: "hi" }],
+    [],
+    { onDelta: (t) => deltas.push(t), onToolCallDelta: () => { throw new Error("should not be called"); } },
+    undefined,
+    "http://ollama.test",
+    fakeFetch
+  );
+
+  assert.deepEqual(deltas, ["Hel", "lo"]);
+  assert.deepEqual(result, { content: "Hello", toolCalls: [] });
+});
+
+test("completeStream() reconstructs tool calls from delta fragments and calls onToolCallDelta per fragment", async () => {
+  const chunks = [
+    JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "web_search", arguments: "" } }] } }] }),
+    JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"query":' } }] } }] }),
+    JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"x"}' } }] } }] }),
+    JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+  ];
+  const fakeFetch: typeof fetch = async () => sseResponse(chunks);
+
+  const toolDeltas: { index: number; id?: string; name?: string; argsFragment?: string }[] = [];
+  const result = await completeStream(
+    "gemma4:12b",
+    [{ role: "user", content: "search" }],
+    [],
+    { onDelta: () => { throw new Error("should not be called"); }, onToolCallDelta: (d) => toolDeltas.push(d) },
+    undefined,
+    "http://ollama.test",
+    fakeFetch
+  );
+
+  assert.equal(toolDeltas.length, 3);
+  assert.deepEqual(result, {
+    content: "",
+    toolCalls: [{ id: "call_1", type: "function", function: { name: "web_search", arguments: '{"query":"x"}' } }],
+  });
+});
+
+test("completeStream() rejects with AbortError when the signal is already aborted", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const fakeFetch: typeof fetch = async (_url, init) => {
+    if (init?.signal?.aborted) {
+      const err = new Error("aborted");
+      err.name = "AbortError";
+      throw err;
+    }
+    return sseResponse([]);
+  };
+
+  await assert.rejects(
+    () =>
+      completeStream(
+        "gemma4:12b",
+        [{ role: "user", content: "hi" }],
+        [],
+        { onDelta: () => {}, onToolCallDelta: () => {} },
+        controller.signal,
+        "http://ollama.test",
+        fakeFetch
+      ),
+    { name: "AbortError" }
   );
 });
