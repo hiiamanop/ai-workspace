@@ -129,6 +129,90 @@ test("handleAgentTurn() does not add a duplicate tool def when the client alread
   await handleAgentTurn(request, deps);
 });
 
+test("handleAgentTurn() switches to a different candidate mid-loop when the estimate exceeds the current candidate's window", async () => {
+  const smallOllama = {
+    id: "gemma4-12b", vendor: "ollama-local", kind: "model" as const,
+    cost_per_1k_tokens: 0, scores: {}, context_window_tokens: 1300,
+  };
+  const bigDeepseek = {
+    id: "deepseek-v4-flash", vendor: "deepseek", kind: "model" as const,
+    cost_per_1k_tokens: 0.001, scores: {}, context_window_tokens: 1_000_000,
+  };
+  const candidates = [smallOllama, bigDeepseek];
+
+  let decideCalls = 0;
+  const deps: AgentTurnDeps = {
+    availableCandidates: () => candidates,
+    decide: async () => {
+      decideCalls += 1;
+      if (decideCalls === 1) {
+        return { ...modelDecision, selected_candidate_id: "gemma4-12b" };
+      }
+      return { ...modelDecision, selected_candidate_id: "deepseek-v4-flash" };
+    },
+    completeByProvider: {
+      "ollama-local": async () => ({
+        content: "",
+        toolCalls: [
+          { id: "call_1", type: "function" as const, function: { name: "web_search", arguments: '{"query":"x"}' } },
+        ],
+      }),
+      deepseek: async (_model, messages) => {
+        const toolMsg = messages.find((m) => m.role === "tool");
+        return { content: `answered by deepseek using: ${toolMsg?.content}`, toolCalls: [] };
+      },
+    },
+    serverToolExecutors: {
+      web_search: async () => "x".repeat(1000),
+    },
+  };
+
+  const result = await handleAgentTurn(baseRequest, deps);
+
+  // iteration 0 estimate for baseRequest's exact shape is 1156 (fits 1300, no switch yet);
+  // after the first server-tool round-trip, iteration 1's estimate is 1458 (exceeds 1300, triggers the switch).
+  assert.equal(decideCalls, 2);
+  assert.deepEqual(result, { type: "text", text: `answered by deepseek using: ${"x".repeat(1000)}` });
+});
+
+test("handleAgentTurn() returns the last non-empty text with a note when MADE finds no candidate that fits mid-loop", async () => {
+  const smallOllama = {
+    id: "gemma4-12b", vendor: "ollama-local", kind: "model" as const,
+    cost_per_1k_tokens: 0, scores: {}, context_window_tokens: 1300,
+  };
+  const candidates = [smallOllama];
+
+  let decideCalls = 0;
+  const deps: AgentTurnDeps = {
+    availableCandidates: () => candidates,
+    decide: async () => {
+      decideCalls += 1;
+      if (decideCalls === 1) {
+        return { ...modelDecision, selected_candidate_id: "gemma4-12b" };
+      }
+      return { ...modelDecision, selected_candidate_id: null };
+    },
+    completeByProvider: {
+      "ollama-local": async () => ({
+        content: "partial answer",
+        toolCalls: [
+          { id: "call_1", type: "function" as const, function: { name: "web_search", arguments: '{"query":"x"}' } },
+        ],
+      }),
+    },
+    serverToolExecutors: {
+      web_search: async () => "x".repeat(1000),
+    },
+  };
+
+  const result = await handleAgentTurn(baseRequest, deps);
+
+  assert.deepEqual(result, {
+    type: "text",
+    text: "partial answer\n\n[context window exhausted — response may be incomplete]",
+  });
+});
+
 test("handleAgentTurn() throws when MADE selects no candidate", async () => {
   await assert.rejects(
     () =>
