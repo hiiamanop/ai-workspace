@@ -232,6 +232,88 @@ test("handleChat() throws when MADE requires human approval for tool_selection",
   );
 });
 
+test("handleChat() switches to a different candidate mid-loop when the estimate exceeds the current candidate's window", async () => {
+  const smallOllama = {
+    id: "gemma4-12b", vendor: "ollama-local", kind: "model" as const,
+    cost_per_1k_tokens: 0, scores: {}, context_window_tokens: 1200,
+  };
+  const bigDeepseek = {
+    id: "deepseek-v4-flash", vendor: "deepseek", kind: "model" as const,
+    cost_per_1k_tokens: 0.001, scores: {}, context_window_tokens: 1_000_000,
+  };
+  const candidates = [smallOllama, bigDeepseek];
+
+  let modelDecideCalls = 0;
+  const deps: ChatDeps = {
+    availableCandidates: () => candidates,
+    availableToolCandidates: baseDeps.availableToolCandidates,
+    decide: async (request) => {
+      if (request.decision_kind === "tool_selection") return allowAllToolsDecision();
+      modelDecideCalls += 1;
+      if (modelDecideCalls === 1) {
+        return { ...modelDecision, selected_candidate_id: "gemma4-12b" };
+      }
+      return { ...modelDecision, selected_candidate_id: "deepseek-v4-flash" };
+    },
+    completeByProvider: {
+      "ollama-local": async () => ({
+        content: "",
+        toolCalls: [{ id: "call_1", type: "function", function: { name: "web_search", arguments: "{}" } }],
+      }),
+      deepseek: async (_model, messages) => {
+        const toolMessage = messages.find((m) => m.role === "tool");
+        return { content: `answered by deepseek using: ${toolMessage?.content}`, toolCalls: [] };
+      },
+    },
+    toolExecutors: {
+      web_search: async () => "x".repeat(1000),
+    },
+  };
+
+  const result = await handleChat("search something", deps);
+
+  // iteration 0 estimate for this exact message/tool shape is 1115 (fits 1200, no switch yet);
+  // after the first tool round-trip, iteration 1's estimate is 1417 (exceeds 1200, triggers the switch).
+  assert.equal(modelDecideCalls, 2);
+  assert.equal(result.selectedCandidateId, "deepseek-v4-flash");
+  assert.match(result.reply, /^answered by deepseek using:/);
+});
+
+test("handleChat() returns the last non-empty content with a note when MADE finds no candidate that fits mid-loop", async () => {
+  const smallOllama = {
+    id: "gemma4-12b", vendor: "ollama-local", kind: "model" as const,
+    cost_per_1k_tokens: 0, scores: {}, context_window_tokens: 1200,
+  };
+  const candidates = [smallOllama];
+
+  let modelDecideCalls = 0;
+  const deps: ChatDeps = {
+    availableCandidates: () => candidates,
+    availableToolCandidates: baseDeps.availableToolCandidates,
+    decide: async (request) => {
+      if (request.decision_kind === "tool_selection") return allowAllToolsDecision();
+      modelDecideCalls += 1;
+      if (modelDecideCalls === 1) {
+        return { ...modelDecision, selected_candidate_id: "gemma4-12b" };
+      }
+      return { ...modelDecision, selected_candidate_id: null };
+    },
+    completeByProvider: {
+      "ollama-local": async () => ({
+        content: "partial thought",
+        toolCalls: [{ id: "call_1", type: "function", function: { name: "web_search", arguments: "{}" } }],
+      }),
+    },
+    toolExecutors: {
+      web_search: async () => "x".repeat(1000),
+    },
+  };
+
+  const result = await handleChat("search something", deps);
+
+  assert.equal(result.reply, "partial thought\n\n[context window exhausted — response may be incomplete]");
+});
+
 test("handleChat() truncates tool results longer than 8000 chars before feeding them back to the model", async () => {
   const longResult = "x".repeat(9000);
   let capturedToolContent = "";

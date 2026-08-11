@@ -6,6 +6,7 @@ import { callWebSearch } from "./mcp/searxng-client.ts";
 import { callScrape } from "./mcp/scrapling-client.ts";
 import { TOOL_DEFS } from "./tools.ts";
 import { estimateContextTokens } from "./token-estimate.ts";
+import { ensureCandidateFits } from "./context-guard.ts";
 import type { CandidateIn, ChatMessage, CompletionResult, DecideRequest, DecideResponse, ToolDef } from "./types.ts";
 
 const MAX_TOOL_ITERATIONS = 5;
@@ -81,12 +82,12 @@ export async function handleChat(
     throw new Error("MADE requires human approval for this request");
   }
 
-  const selected = candidates.find((c) => c.id === modelDecision.selected_candidate_id);
+  let selected = candidates.find((c) => c.id === modelDecision.selected_candidate_id);
   if (!selected) {
     throw new Error(`MADE selected unknown candidate id ${modelDecision.selected_candidate_id}`);
   }
 
-  const complete = deps.completeByProvider[selected.vendor];
+  let complete = deps.completeByProvider[selected.vendor];
   if (!complete) {
     throw new Error(`no provider client registered for vendor ${selected.vendor}`);
   }
@@ -106,6 +107,29 @@ export async function handleChat(
   let lastNonEmptyContent: string | null = null;
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+    const currentEstimate = estimateContextTokens("", Object.values(TOOL_DEFS), messages);
+    const capacity = await ensureCandidateFits(selected, candidates, currentEstimate, deps.decide);
+
+    if (capacity.status === "exhausted") {
+      if (lastNonEmptyContent) {
+        return {
+          selectedCandidateId: selected.id,
+          reply: `${lastNonEmptyContent}\n\n[context window exhausted — response may be incomplete]`,
+          toolsUsed,
+        };
+      }
+      throw new Error("MADE returned no eligible candidate");
+    }
+
+    if (capacity.status === "switched") {
+      selected = capacity.candidate;
+      const nextComplete = deps.completeByProvider[selected.vendor];
+      if (!nextComplete) {
+        throw new Error(`no provider client registered for vendor ${selected.vendor}`);
+      }
+      complete = nextComplete;
+    }
+
     const result = await complete(selected.id, messages, tools);
 
     if (result.content) {
