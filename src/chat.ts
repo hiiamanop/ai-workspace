@@ -5,6 +5,7 @@ import { complete as deepseekComplete } from "./providers/deepseek-client.ts";
 import { callWebSearch } from "./mcp/searxng-client.ts";
 import { callScrape } from "./mcp/scrapling-client.ts";
 import { TOOL_DEFS } from "./tools.ts";
+import { estimateContextTokens } from "./token-estimate.ts";
 import type { CandidateIn, ChatMessage, CompletionResult, DecideRequest, DecideResponse, ToolDef } from "./types.ts";
 
 const MAX_TOOL_ITERATIONS = 5;
@@ -34,9 +35,17 @@ const defaultDeps: ChatDeps = {
   },
 };
 
-function decideRequest(decisionKind: DecideRequest["decision_kind"], candidates: CandidateIn[]): DecideRequest {
+function decideRequest(
+  decisionKind: DecideRequest["decision_kind"],
+  candidates: CandidateIn[],
+  messages: ChatMessage[]
+): DecideRequest {
   return {
-    task: { type: "chat", data_classification: "internal" },
+    task: {
+      type: "chat",
+      data_classification: "internal",
+      estimated_context_tokens: estimateContextTokens("", Object.values(TOOL_DEFS), messages),
+    },
     org: { budget_remaining_usd: 1000, region: "us" },
     decision_kind: decisionKind,
     candidates,
@@ -61,8 +70,9 @@ export async function handleChat(
   deps: ChatDeps = defaultDeps
 ): Promise<{ selectedCandidateId: string; reply: string; toolsUsed: string[] }> {
   const candidates = deps.availableCandidates();
+  const messages: ChatMessage[] = [{ role: "user", content: message }];
 
-  const modelDecision = await deps.decide(decideRequest("model_selection", candidates));
+  const modelDecision = await deps.decide(decideRequest("model_selection", candidates, messages));
 
   if (!modelDecision.selected_candidate_id) {
     throw new Error("MADE returned no eligible candidate");
@@ -82,7 +92,7 @@ export async function handleChat(
   }
 
   const toolCandidates = deps.availableToolCandidates();
-  const toolDecision = await deps.decide(decideRequest("tool_selection", toolCandidates));
+  const toolDecision = await deps.decide(decideRequest("tool_selection", toolCandidates, messages));
   if (toolDecision.requires_human_approval) {
     throw new Error("MADE requires human approval for this request");
   }
@@ -92,7 +102,6 @@ export async function handleChat(
     .map((c) => TOOL_DEFS[c.id])
     .filter((t): t is ToolDef => Boolean(t));
 
-  const messages: ChatMessage[] = [{ role: "user", content: message }];
   const toolsUsed: string[] = [];
   let lastNonEmptyContent: string | null = null;
 

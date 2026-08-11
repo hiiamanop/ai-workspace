@@ -5,6 +5,7 @@ import { complete as deepseekComplete } from "./providers/deepseek-client.ts";
 import { callWebSearch } from "./mcp/searxng-client.ts";
 import { callScrape } from "./mcp/scrapling-client.ts";
 import { TOOL_DEFS } from "./tools.ts";
+import { estimateContextTokens } from "./token-estimate.ts";
 import type { CandidateIn, ChatMessage, CompletionResult, DecideRequest, DecideResponse, ToolDef } from "./types.ts";
 
 const MAX_TURN_ITERATIONS = 5;
@@ -115,9 +116,13 @@ function mergeTools(clientTools: AgentToolDef[]): ToolDef[] {
   return merged;
 }
 
-function decideRequest(candidates: CandidateIn[]): DecideRequest {
+function decideRequest(candidates: CandidateIn[], request: AgentTurnRequest): DecideRequest {
   return {
-    task: { type: "chat", data_classification: "internal" },
+    task: {
+      type: "chat",
+      data_classification: "internal",
+      estimated_context_tokens: estimateContextTokens(request.system, request.tools, request.messages),
+    },
     org: { budget_remaining_usd: 1000, region: "us" },
     decision_kind: "model_selection",
     candidates,
@@ -127,7 +132,7 @@ function decideRequest(candidates: CandidateIn[]): DecideRequest {
 
 export async function handleAgentTurn(request: AgentTurnRequest, deps: AgentTurnDeps = defaultDeps): Promise<AgentTurnResult> {
   const candidates = deps.availableCandidates();
-  const modelDecision = await deps.decide(decideRequest(candidates));
+  const modelDecision = await deps.decide(decideRequest(candidates, request));
 
   if (!modelDecision.selected_candidate_id) {
     throw new Error("MADE returned no eligible candidate");

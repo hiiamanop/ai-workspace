@@ -29,8 +29,13 @@ const baseRequest: AgentTurnRequest = {
 };
 
 test("handleAgentTurn() returns final text when the model calls no tools", async () => {
+  let estimatedTokensSeen = 0;
   const deps: AgentTurnDeps = {
     ...baseDeps,
+    decide: async (request) => {
+      estimatedTokensSeen = request.task.estimated_context_tokens ?? 0;
+      return modelDecision;
+    },
     completeByProvider: {
       "ollama-local": async (_model, messages, tools) => {
         assert.equal(messages[0].role, "system");
@@ -46,6 +51,7 @@ test("handleAgentTurn() returns final text when the model calls no tools", async
 
   const result = await handleAgentTurn(baseRequest, deps);
 
+  assert.ok(estimatedTokensSeen > 0);
   assert.deepEqual(result, { type: "text", text: "hi there" });
 });
 

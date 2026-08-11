@@ -56,10 +56,12 @@ const baseDeps = {
 
 test("handleChat() skips tool wiring entirely when MADE allows no tools", async () => {
   const decideCalls: string[] = [];
+  const estimatedTokensSeen: number[] = [];
   const deps: ChatDeps = {
     ...baseDeps,
     decide: async (request) => {
       decideCalls.push(request.decision_kind);
+      estimatedTokensSeen.push(request.task.estimated_context_tokens ?? 0);
       return request.decision_kind === "model_selection" ? modelDecision : noToolsDecision();
     },
     completeByProvider: {
@@ -77,6 +79,7 @@ test("handleChat() skips tool wiring entirely when MADE allows no tools", async 
   const result = await handleChat("hello there", deps);
 
   assert.deepEqual(decideCalls, ["model_selection", "tool_selection"]);
+  assert.ok(estimatedTokensSeen.every((n) => n > 0));
   assert.equal(result.selectedCandidateId, "gemma4-12b");
   assert.equal(result.reply, "echo: hello there");
   assert.deepEqual(result.toolsUsed, []);
