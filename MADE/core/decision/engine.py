@@ -13,6 +13,7 @@ from core.modm.weighted_sum import weighted_sum
 class Task(BaseModel):
     type: str
     data_classification: Literal["public", "internal", "confidential", "restricted"]
+    estimated_context_tokens: int = 0
 
 
 class Org(BaseModel):
@@ -26,6 +27,7 @@ class DecisionCandidate(BaseModel):
     kind: Literal["model", "tool"]  # "model" | "tool"
     cost_per_1k_tokens: float
     scores: dict[str, float]
+    context_window_tokens: int | None = None
 
 
 class ExcludedCandidate(BaseModel):
@@ -66,6 +68,7 @@ def decide(
                 "id": candidate.id,
                 "vendor": candidate.vendor,
                 "cost_per_1k_tokens": candidate.cost_per_1k_tokens,
+                "context_window_tokens": candidate.context_window_tokens,
             },
             "org": org.model_dump(),
         }

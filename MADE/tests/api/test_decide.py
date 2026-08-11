@@ -92,3 +92,25 @@ def test_decide_returns_503_when_policy_engine_unavailable(tmp_path, monkeypatch
 
     assert response.status_code == 503
     assert "policy engine unavailable" in response.json()["detail"]
+
+
+def test_decide_excludes_candidate_with_insufficient_context_window(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+
+    response = client.post("/decide", json={
+        "task": {"type": "chat", "data_classification": "internal", "estimated_context_tokens": 9000},
+        "decision_kind": "model_selection",
+        "candidates": [
+            {
+                "id": "gemma4:12b", "vendor": "ollama-local", "kind": "model", "cost_per_1k_tokens": 0.0,
+                "scores": {"cost": 0.0, "quality": 0.75, "latency": 9000, "business_risk": 0.1},
+                "context_window_tokens": 4096,
+            },
+        ],
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["selected_candidate_id"] is None
+    assert len(body["excluded"]) == 1
+    assert "context:" in body["excluded"][0]["reason"]

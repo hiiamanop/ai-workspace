@@ -61,12 +61,17 @@ def validate_policies_on_startup() -> None:
 
 @app.post("/decide", response_model=DecideResponse)
 def post_decide(request: DecideRequest) -> DecideResponse:
-    task = Task(type=request.task.type, data_classification=request.task.data_classification)
+    task = Task(
+        type=request.task.type,
+        data_classification=request.task.data_classification,
+        estimated_context_tokens=request.task.estimated_context_tokens,
+    )
     org = Org(budget_remaining_usd=request.org.budget_remaining_usd, region=request.org.region)
     candidates = [
         DecisionCandidate(
             id=c.id, vendor=c.vendor, kind=c.kind,
             cost_per_1k_tokens=c.cost_per_1k_tokens, scores=c.scores,
+            context_window_tokens=c.context_window_tokens,
         )
         for c in request.candidates
     ]

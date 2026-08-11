@@ -6,6 +6,7 @@ from pydantic import BaseModel
 class TaskIn(BaseModel):
     type: str
     data_classification: Literal["public", "internal", "confidential", "restricted"]
+    estimated_context_tokens: int = 0
 
 
 class OrgIn(BaseModel):
@@ -19,6 +20,7 @@ class CandidateIn(BaseModel):
     kind: Literal["model", "tool"]
     cost_per_1k_tokens: float
     scores: dict[str, float]
+    context_window_tokens: int | None = None
 
 
 class DecideRequest(BaseModel):
