@@ -33,7 +33,7 @@ export function createMadeTransport(): AgentTransport {
 
           if (!res.ok) {
             const body = await res.json().catch(() => ({ error: `request failed: ${res.status}` }));
-            callbacks.onError(body.error ?? `request failed: ${res.status}`);
+            if (!cancelled) callbacks.onError(body.error ?? `request failed: ${res.status}`);
             return;
           }
 
@@ -45,13 +45,13 @@ export function createMadeTransport(): AgentTransport {
 
           if (data.type === "text") {
             if (data.text) callbacks.onDelta(data.text);
-            callbacks.onDone();
+            if (!cancelled) callbacks.onDone();
           } else if (data.type === "tool_calls") {
             if (data.text) callbacks.onDelta(data.text);
             for (const call of data.calls) callbacks.onToolCall(call);
-            callbacks.onDone();
+            if (!cancelled) callbacks.onDone();
           } else {
-            callbacks.onError("unexpected response shape from /api/agent-turn");
+            if (!cancelled) callbacks.onError("unexpected response shape from /api/agent-turn");
           }
         } catch (err) {
           if (!cancelled) callbacks.onError((err as Error).message);
