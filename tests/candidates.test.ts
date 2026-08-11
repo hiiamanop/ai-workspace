@@ -34,6 +34,12 @@ test("availableCandidates() sets the Ollama candidate's context_window_tokens fr
   assert.equal(ollamaOverride?.context_window_tokens, 16384);
 });
 
+test("availableCandidates() falls back to 4096 when OLLAMA_CONTEXT_WINDOW is an empty string", () => {
+  const candidates = availableCandidates({ OLLAMA_CONTEXT_WINDOW: "" });
+  const ollama = candidates.find((c) => c.id === "gemma4:12b");
+  assert.equal(ollama?.context_window_tokens, 4096);
+});
+
 test("availableCandidates() sets the DeepSeek candidate's context_window_tokens to 1,000,000", () => {
   const candidates = availableCandidates({ DEEPSEEK_API_KEY: "sk-test" });
   const deepseek = candidates.find((c) => c.id === "deepseek-v4-flash");

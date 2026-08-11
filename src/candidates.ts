@@ -11,7 +11,10 @@ function ollamaCandidate(env: NodeJS.ProcessEnv): CandidateIn {
     kind: "model",
     cost_per_1k_tokens: 0,
     scores: { cost: 0, quality: 0.75, latency: 9000, business_risk: 0.1 },
-    context_window_tokens: Number(env.OLLAMA_CONTEXT_WINDOW ?? 4096),
+    context_window_tokens: (() => {
+      const parsed = Number.parseInt(env.OLLAMA_CONTEXT_WINDOW ?? "", 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 4096;
+    })(),
   };
 }
 
