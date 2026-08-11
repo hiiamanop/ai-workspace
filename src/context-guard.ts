@@ -9,6 +9,7 @@ export async function ensureCandidateFits(
   current: CandidateIn,
   candidates: CandidateIn[],
   estimatedTokens: number,
+  baseRequest: DecideRequest,
   decide: (request: DecideRequest) => Promise<DecideResponse>
 ): Promise<CapacityCheckResult> {
   if (!current.context_window_tokens || estimatedTokens <= current.context_window_tokens) {
@@ -16,15 +17,10 @@ export async function ensureCandidateFits(
   }
 
   const decision = await decide({
-    task: {
-      type: "chat",
-      data_classification: "internal",
-      estimated_context_tokens: estimatedTokens,
-    },
-    org: { budget_remaining_usd: 1000, region: "us" },
+    ...baseRequest,
+    task: { ...baseRequest.task, estimated_context_tokens: estimatedTokens },
     decision_kind: "model_selection",
     candidates,
-    policy_set: "default",
   });
 
   if (!decision.selected_candidate_id || decision.requires_human_approval) {

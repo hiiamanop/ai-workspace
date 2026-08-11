@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ensureCandidateFits } from "../src/context-guard.ts";
-import type { CandidateIn, DecideResponse } from "../src/types.ts";
+import type { CandidateIn, DecideRequest, DecideResponse } from "../src/types.ts";
 
 const ollama: CandidateIn = {
   id: "gemma4-12b",
@@ -23,6 +23,14 @@ const deepseek: CandidateIn = {
 
 const candidates = [ollama, deepseek];
 
+const baseRequest: DecideRequest = {
+  task: { type: "chat", data_classification: "internal" },
+  org: { budget_remaining_usd: 1000, region: "us" },
+  decision_kind: "model_selection",
+  candidates: [],
+  policy_set: "default",
+};
+
 function decision(overrides: Partial<DecideResponse>): DecideResponse {
   return {
     decision_id: "d1",
@@ -38,7 +46,7 @@ function decision(overrides: Partial<DecideResponse>): DecideResponse {
 
 test("ensureCandidateFits() returns ok without calling decide() when the estimate fits", async () => {
   let decideCalls = 0;
-  const result = await ensureCandidateFits(ollama, candidates, 2000, async () => {
+  const result = await ensureCandidateFits(ollama, candidates, 2000, baseRequest, async () => {
     decideCalls += 1;
     return decision({});
   });
@@ -50,7 +58,7 @@ test("ensureCandidateFits() returns ok without calling decide() when the estimat
 test("ensureCandidateFits() returns ok when the candidate has no context_window_tokens", async () => {
   const noWindow: CandidateIn = { ...ollama, context_window_tokens: undefined };
   let decideCalls = 0;
-  const result = await ensureCandidateFits(noWindow, candidates, 999_999, async () => {
+  const result = await ensureCandidateFits(noWindow, candidates, 999_999, baseRequest, async () => {
     decideCalls += 1;
     return decision({});
   });
@@ -60,7 +68,7 @@ test("ensureCandidateFits() returns ok when the candidate has no context_window_
 });
 
 test("ensureCandidateFits() returns switched with the new candidate when decide() finds a better fit", async () => {
-  const result = await ensureCandidateFits(ollama, candidates, 9000, async (request) => {
+  const result = await ensureCandidateFits(ollama, candidates, 9000, baseRequest, async (request) => {
     assert.equal(request.task.estimated_context_tokens, 9000);
     assert.equal(request.decision_kind, "model_selection");
     return decision({ selected_candidate_id: "deepseek-v4-flash" });
@@ -70,7 +78,7 @@ test("ensureCandidateFits() returns switched with the new candidate when decide(
 });
 
 test("ensureCandidateFits() returns exhausted when decide() finds no eligible candidate", async () => {
-  const result = await ensureCandidateFits(ollama, candidates, 9000, async () =>
+  const result = await ensureCandidateFits(ollama, candidates, 9000, baseRequest, async () =>
     decision({ selected_candidate_id: null })
   );
 
@@ -78,7 +86,7 @@ test("ensureCandidateFits() returns exhausted when decide() finds no eligible ca
 });
 
 test("ensureCandidateFits() returns exhausted when decide() requires human approval", async () => {
-  const result = await ensureCandidateFits(ollama, candidates, 9000, async () =>
+  const result = await ensureCandidateFits(ollama, candidates, 9000, baseRequest, async () =>
     decision({ selected_candidate_id: "deepseek-v4-flash", requires_human_approval: true })
   );
 
@@ -86,7 +94,7 @@ test("ensureCandidateFits() returns exhausted when decide() requires human appro
 });
 
 test("ensureCandidateFits() returns exhausted when decide() selects a candidate id not in the list", async () => {
-  const result = await ensureCandidateFits(ollama, candidates, 9000, async () =>
+  const result = await ensureCandidateFits(ollama, candidates, 9000, baseRequest, async () =>
     decision({ selected_candidate_id: "unknown-model" })
   );
 

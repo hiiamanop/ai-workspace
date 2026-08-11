@@ -108,7 +108,13 @@ export async function handleChat(
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const currentEstimate = estimateContextTokens("", Object.values(TOOL_DEFS), messages);
-    const capacity = await ensureCandidateFits(selected, candidates, currentEstimate, deps.decide);
+    const capacity = await ensureCandidateFits(
+      selected,
+      candidates,
+      currentEstimate,
+      decideRequest("model_selection", candidates, messages),
+      deps.decide
+    );
 
     if (capacity.status === "exhausted") {
       if (lastNonEmptyContent) {

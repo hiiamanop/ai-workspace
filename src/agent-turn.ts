@@ -117,12 +117,12 @@ function mergeTools(clientTools: AgentToolDef[]): ToolDef[] {
   return merged;
 }
 
-function decideRequest(candidates: CandidateIn[], request: AgentTurnRequest): DecideRequest {
+function decideRequest(candidates: CandidateIn[], tools: ToolDef[], messages: ChatMessage[]): DecideRequest {
   return {
     task: {
       type: "chat",
       data_classification: "internal",
-      estimated_context_tokens: estimateContextTokens(request.system, request.tools, request.messages),
+      estimated_context_tokens: estimateContextTokens("", tools, messages),
     },
     org: { budget_remaining_usd: 1000, region: "us" },
     decision_kind: "model_selection",
@@ -133,7 +133,9 @@ function decideRequest(candidates: CandidateIn[], request: AgentTurnRequest): De
 
 export async function handleAgentTurn(request: AgentTurnRequest, deps: AgentTurnDeps = defaultDeps): Promise<AgentTurnResult> {
   const candidates = deps.availableCandidates();
-  const modelDecision = await deps.decide(decideRequest(candidates, request));
+  const tools = mergeTools(request.tools);
+  const messages = toChatMessages(request.system, request.messages);
+  const modelDecision = await deps.decide(decideRequest(candidates, tools, messages));
 
   if (!modelDecision.selected_candidate_id) {
     throw new Error("MADE returned no eligible candidate");
@@ -152,14 +154,17 @@ export async function handleAgentTurn(request: AgentTurnRequest, deps: AgentTurn
     throw new Error(`no provider client registered for vendor ${selected.vendor}`);
   }
 
-  const tools = mergeTools(request.tools);
-  const messages = toChatMessages(request.system, request.messages);
-
   let lastNonEmptyText: string | null = null;
 
   for (let i = 0; i < MAX_TURN_ITERATIONS; i++) {
     const currentEstimate = estimateContextTokens("", tools, messages);
-    const capacity = await ensureCandidateFits(selected, candidates, currentEstimate, deps.decide);
+    const capacity = await ensureCandidateFits(
+      selected,
+      candidates,
+      currentEstimate,
+      decideRequest(candidates, tools, messages),
+      deps.decide
+    );
 
     if (capacity.status === "exhausted") {
       if (lastNonEmptyText) {
