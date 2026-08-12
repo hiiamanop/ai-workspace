@@ -24,7 +24,8 @@ export function createMadeTransport(): AgentTransport {
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
       return socket;
     }
-    const next = new WebSocket(`ws://${location.host}`);
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const next = new WebSocket(`${wsProtocol}//${location.host}/ws`);
     next.addEventListener('open', () => {
       reconnectAttempts = 0;
     });

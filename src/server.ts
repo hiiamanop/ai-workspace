@@ -124,7 +124,7 @@ function attachWebSocketServer(
   handleChatFn: typeof handleChat,
   handleAgentTurnFn: typeof handleAgentTurn
 ): void {
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ server, path: "/ws" });
   wss.on("connection", (socket: WebSocket) => {
     socket.on("message", (raw: Buffer) => {
       let msg: IncomingWsMessage;
@@ -144,6 +144,10 @@ function attachWebSocketServer(
           return;
         }
         turn.socket = socket;
+        if (turn.buffer.length > 0 && turn.buffer[0].seq > msg.lastSeq + 1) {
+          socket.send(JSON.stringify({ type: "error", turnId: msg.turnId, error: "resume gap: some events were lost, please retry" }));
+          return;
+        }
         for (const event of turn.buffer) {
           if (event.seq > msg.lastSeq) socket.send(JSON.stringify(event.message));
         }

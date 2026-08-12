@@ -85,7 +85,7 @@ test("WS: chat turn streams delta events then a done event", async () => {
   server.listen(0);
   const port = (server.address() as { port: number }).port;
 
-  const ws = new WebSocket(`ws://localhost:${port}`);
+  const ws = new WebSocket(`ws://localhost:${port}/ws`);
   const events: any[] = [];
   await new Promise<void>((resolve, reject) => {
     ws.addEventListener("open", () => {
@@ -120,7 +120,7 @@ test("WS: resume replays buffered events after reconnecting with a new socket", 
   server.listen(0);
   const port = (server.address() as { port: number }).port;
 
-  const ws1 = new WebSocket(`ws://localhost:${port}`);
+  const ws1 = new WebSocket(`ws://localhost:${port}/ws`);
   let turnId = "";
   let lastSeq = -1;
   await new Promise<void>((resolve) => {
@@ -139,7 +139,7 @@ test("WS: resume replays buffered events after reconnecting with a new socket", 
   ws1.close();
   releaseSecondDelta();
 
-  const ws2 = new WebSocket(`ws://localhost:${port}`);
+  const ws2 = new WebSocket(`ws://localhost:${port}/ws`);
   const resumedEvents: any[] = [];
   await new Promise<void>((resolve) => {
     ws2.addEventListener("open", () => ws2.send(JSON.stringify({ type: "resume", turnId, lastSeq })));
@@ -171,7 +171,7 @@ test("WS: stop aborts an in-flight turn and the done event reports stopped:true"
   server.listen(0);
   const port = (server.address() as { port: number }).port;
 
-  const ws = new WebSocket(`ws://localhost:${port}`);
+  const ws = new WebSocket(`ws://localhost:${port}/ws`);
   const events: any[] = [];
   let turnId = "";
   await new Promise<void>((resolve) => {

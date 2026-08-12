@@ -40,7 +40,8 @@ export function ChatApp() {
   }, []);
 
   function connect() {
-    const ws = new WebSocket(`ws://${location.host}`);
+    const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${wsProtocol}//${location.host}/ws`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -70,6 +71,7 @@ export function ChatApp() {
     if (msg.type === "turn_started") {
       setTurnId(msg.turnId ?? null);
       setAwaitingFirstToken(true);
+      lastSeqRef.current = -1;
       return;
     }
 
