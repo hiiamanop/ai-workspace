@@ -29,6 +29,10 @@ const READ_MAX_CHARS = 24_000
 /** Running citation number across every web_search call in this module's lifetime (page/session scoped — simplest correct behavior, avoids threading turn-boundary state through the shared AgentSkill interface) */
 let webSearchCitationOffset = 0
 
+export function resetWebSearchCitations(): void {
+  webSearchCitationOffset = 0
+}
+
 export const AGENT_TOOLS: AgentToolDef[] = [
   {
     name: 'get_document_context',
@@ -320,7 +324,12 @@ async function executeAsyncTool(
         summary: t('aiSumWebSearchDone', { query, count: r.results.length }),
         display: {
           kind: 'links',
-          items: r.results.map((it) => ({ url: it.url, title: it.title, snippet: it.snippet })),
+          items: r.results.map((it) => ({
+            url: it.url,
+            title: it.title,
+            snippet: it.snippet,
+            publishedDate: it.publishedDate,
+          })),
         },
       }
     }

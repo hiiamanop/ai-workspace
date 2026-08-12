@@ -6,7 +6,7 @@ import type { AiSettings, AttachmentAddResult, AttachmentMeta } from '../../shar
 import { ATTACHMENT_IMAGE_EXTS } from '../../shared/ipc'
 import type { PmNode } from '../editor/convert'
 import { findNumId, type NumIds } from './protocol'
-import { markDocSeen } from './tools'
+import { markDocSeen, resetWebSearchCitations } from './tools'
 import { createDocsSkill } from './docs-skill'
 import { applyRevisionsBy } from '../editor/revisions'
 import { DOCS_AGENT_MAX_TURNS, DOCS_CONTINUE_INSTRUCTION } from './continuation'
@@ -463,6 +463,7 @@ export function AiPanel({
 
   const loopRef = useRef<AgentLoop<PmNode> | null>(null)
   if (!loopRef.current) {
+    resetWebSearchCitations()
     const numIds = (): NumIds => ({
       bullet: findNumId(blocksRef.current, 'bullet') ?? numIdFallbackRef.current?.bullet ?? null,
       ordered: findNumId(blocksRef.current, 'ordered') ?? numIdFallbackRef.current?.ordered ?? null,
@@ -885,7 +886,7 @@ export function AiPanel({
             {historicChat.map((entry, i) => (
               <div key={`h${i}`} className={`ai-msg ai-msg-${entry.role} ai-msg-historic`}>
                 {entry.tools && entry.tools.length > 0 && <ToolChipList tools={entry.tools} />}
-                {entry.text && <Markdown text={entry.text} citations={citations} />}
+                {entry.text && <Markdown text={entry.text} />}
               </div>
             ))}
             <div className="ai-history-sep">{t('aiHistorySep')}</div>
