@@ -255,3 +255,76 @@ test("handleAgentTurn() throws once the internal server-tool loop exceeds its it
 
   await assert.rejects(() => handleAgentTurn(baseRequest, deps), /agent-turn tool loop exceeded maximum iterations/);
 });
+
+test("handleAgentTurn() calls completeStreamByProvider instead of completeByProvider when streamCallbacks is provided", async () => {
+  const deltas: string[] = [];
+  const deps: AgentTurnDeps = {
+    ...baseDeps,
+    completeByProvider: {
+      "ollama-local": async () => {
+        throw new Error("should not be called");
+      },
+    },
+    completeStreamByProvider: {
+      "ollama-local": async (_model, _messages, _tools, callbacks) => {
+        callbacks.onDelta("streamed reply");
+        return { content: "streamed reply", toolCalls: [] };
+      },
+    },
+    serverToolExecutors: {},
+  };
+
+  const result = await handleAgentTurn(baseRequest, deps, {
+    onDelta: (t) => deltas.push(t),
+    onToolCallDelta: () => {},
+    onToolResult: () => {},
+  });
+
+  assert.deepEqual(deltas, ["streamed reply"]);
+  assert.deepEqual(result, { type: "text", text: "streamed reply" });
+});
+
+test("handleAgentTurn() calls onToolResult after executing a server tool when streaming", async () => {
+  let callCount = 0;
+  const toolResults: { index: number; name: string; result: string }[] = [];
+  const deps: AgentTurnDeps = {
+    ...baseDeps,
+    completeByProvider: {},
+    completeStreamByProvider: {
+      "ollama-local": async (_model, _messages) => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            content: "",
+            toolCalls: [
+              { id: "call_1", type: "function" as const, function: { name: "web_search", arguments: '{"query":"x"}' } },
+            ],
+          };
+        }
+        return { content: "answer", toolCalls: [] };
+      },
+    },
+    serverToolExecutors: { web_search: async (args) => `results for ${args.query}` },
+  };
+
+  await handleAgentTurn(baseRequest, deps, {
+    onDelta: () => {},
+    onToolCallDelta: () => {},
+    onToolResult: (index, name, result) => toolResults.push({ index, name, result }),
+  });
+
+  assert.deepEqual(toolResults, [{ index: 0, name: "web_search", result: "results for x" }]);
+});
+
+test("handleAgentTurn() falls back to non-streaming completeByProvider when streamCallbacks is omitted", async () => {
+  const deps: AgentTurnDeps = {
+    ...baseDeps,
+    completeByProvider: {
+      "ollama-local": async () => ({ content: "non-streamed", toolCalls: [] }),
+    },
+  };
+
+  const result = await handleAgentTurn(baseRequest, deps);
+
+  assert.deepEqual(result, { type: "text", text: "non-streamed" });
+});
