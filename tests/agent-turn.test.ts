@@ -47,6 +47,9 @@ test("handleAgentTurn() returns final text when the model calls no tools", async
       },
     },
     serverToolExecutors: {},
+    webSearchExecutor: async () => {
+      throw new Error("should not be called");
+    },
   };
 
   const result = await handleAgentTurn(baseRequest, deps);
@@ -70,6 +73,9 @@ test("handleAgentTurn() hands an unrecognized (document) tool call back unexecut
       web_search: async () => {
         throw new Error("should not be called");
       },
+    },
+    webSearchExecutor: async () => {
+      throw new Error("should not be called");
     },
   };
 
@@ -101,15 +107,17 @@ test("handleAgentTurn() executes web_search/scrape internally and loops without 
         return { content: `answer using: ${toolMsg?.content}`, toolCalls: [] };
       },
     },
-    serverToolExecutors: {
-      web_search: async (args) => `results for ${args.query}`,
-    },
+    serverToolExecutors: {},
+    webSearchExecutor: async (query) => ({ results: [{ title: "R", url: "https://x.example", snippet: `results for ${query}` }] }),
   };
 
   const result = await handleAgentTurn(baseRequest, deps);
 
   assert.equal(callCount, 2);
-  assert.deepEqual(result, { type: "text", text: "answer using: results for weather" });
+  assert.deepEqual(result, {
+    type: "text",
+    text: "answer using: [1] R\n    results for weather\n    https://x.example",
+  });
 });
 
 test("handleAgentTurn() does not add a duplicate tool def when the client already sent one with the same name", async () => {
@@ -124,6 +132,9 @@ test("handleAgentTurn() does not add a duplicate tool def when the client alread
       },
     },
     serverToolExecutors: {},
+    webSearchExecutor: async () => {
+      throw new Error("should not be called");
+    },
   };
 
   await handleAgentTurn(request, deps);
@@ -162,17 +173,19 @@ test("handleAgentTurn() switches to a different candidate mid-loop when the esti
         return { content: `answered by deepseek using: ${toolMsg?.content}`, toolCalls: [] };
       },
     },
-    serverToolExecutors: {
-      web_search: async () => "x".repeat(1000),
-    },
+    serverToolExecutors: {},
+    webSearchExecutor: async () => ({ results: [{ title: "", url: "", snippet: "x".repeat(1000) }] }),
   };
 
   const result = await handleAgentTurn(baseRequest, deps);
 
-  // iteration 0 estimate for baseRequest's exact shape is 1156 (fits 1300, no switch yet);
-  // after the first server-tool round-trip, iteration 1's estimate is 1458 (exceeds 1300, triggers the switch).
+  // iteration 0 estimate for baseRequest's exact shape is 1200 (fits 1300, no switch yet);
+  // after the first server-tool round-trip, iteration 1's estimate is 1509 (exceeds 1300, triggers the switch).
   assert.equal(decideCalls, 2);
-  assert.deepEqual(result, { type: "text", text: `answered by deepseek using: ${"x".repeat(1000)}` });
+  assert.deepEqual(result, {
+    type: "text",
+    text: `answered by deepseek using: [1] \n    ${"x".repeat(1000)}\n    `,
+  });
 });
 
 test("handleAgentTurn() returns the last non-empty text with a note when MADE finds no candidate that fits mid-loop", async () => {
@@ -200,9 +213,8 @@ test("handleAgentTurn() returns the last non-empty text with a note when MADE fi
         ],
       }),
     },
-    serverToolExecutors: {
-      web_search: async () => "x".repeat(1000),
-    },
+    serverToolExecutors: {},
+    webSearchExecutor: async () => ({ results: [{ title: "", url: "", snippet: "x".repeat(1000) }] }),
   };
 
   const result = await handleAgentTurn(baseRequest, deps);
@@ -221,6 +233,9 @@ test("handleAgentTurn() throws when MADE selects no candidate", async () => {
         decide: async () => ({ ...modelDecision, selected_candidate_id: null }),
         completeByProvider: {},
         serverToolExecutors: {},
+        webSearchExecutor: async () => {
+          throw new Error("should not be called");
+        },
       }),
     /MADE returned no eligible candidate/
   );
@@ -234,6 +249,9 @@ test("handleAgentTurn() throws when MADE requires human approval", async () => {
         decide: async () => ({ ...modelDecision, requires_human_approval: true }),
         completeByProvider: {},
         serverToolExecutors: {},
+        webSearchExecutor: async () => {
+          throw new Error("should not be called");
+        },
       }),
     /MADE requires human approval for this request/
   );
@@ -248,9 +266,8 @@ test("handleAgentTurn() throws once the internal server-tool loop exceeds its it
         toolCalls: [{ id: "call_x", type: "function" as const, function: { name: "web_search", arguments: "{}" } }],
       }),
     },
-    serverToolExecutors: {
-      web_search: async () => "result",
-    },
+    serverToolExecutors: {},
+    webSearchExecutor: async () => ({ results: [{ title: "R", url: "https://x.example", snippet: "result" }] }),
   };
 
   await assert.rejects(() => handleAgentTurn(baseRequest, deps), /agent-turn tool loop exceeded maximum iterations/);
@@ -272,6 +289,9 @@ test("handleAgentTurn() calls completeStreamByProvider instead of completeByProv
       },
     },
     serverToolExecutors: {},
+    webSearchExecutor: async () => {
+      throw new Error("should not be called");
+    },
   };
 
   const result = await handleAgentTurn(baseRequest, deps, {
@@ -304,7 +324,8 @@ test("handleAgentTurn() calls onToolResult after executing a server tool when st
         return { content: "answer", toolCalls: [] };
       },
     },
-    serverToolExecutors: { web_search: async (args) => `results for ${args.query}` },
+    serverToolExecutors: {},
+    webSearchExecutor: async (query) => ({ results: [{ title: "R", url: "https://x.example", snippet: `results for ${query}` }] }),
   };
 
   await handleAgentTurn(baseRequest, deps, {
@@ -313,7 +334,9 @@ test("handleAgentTurn() calls onToolResult after executing a server tool when st
     onToolResult: (index, name, result) => toolResults.push({ index, name, result }),
   });
 
-  assert.deepEqual(toolResults, [{ index: 0, name: "web_search", result: "results for x" }]);
+  assert.deepEqual(toolResults, [
+    { index: 0, name: "web_search", result: "[1] R\n    results for x\n    https://x.example" },
+  ]);
 });
 
 test("handleAgentTurn() falls back to non-streaming completeByProvider when streamCallbacks is omitted", async () => {
@@ -322,9 +345,54 @@ test("handleAgentTurn() falls back to non-streaming completeByProvider when stre
     completeByProvider: {
       "ollama-local": async () => ({ content: "non-streamed", toolCalls: [] }),
     },
+    serverToolExecutors: {},
+    webSearchExecutor: async () => {
+      throw new Error("should not be called");
+    },
   };
 
   const result = await handleAgentTurn(baseRequest, deps);
 
   assert.deepEqual(result, { type: "text", text: "non-streamed" });
+});
+
+test("handleAgentTurn() calls onSources with the accumulated results after each web_search call", async () => {
+  let callCount = 0;
+  const sourcesSeen: unknown[] = [];
+  const deps: AgentTurnDeps = {
+    ...baseDeps,
+    completeByProvider: {},
+    completeStreamByProvider: {
+      "ollama-local": async (_model, _messages) => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            content: "",
+            toolCalls: [{ id: "call_1", type: "function" as const, function: { name: "web_search", arguments: '{"query":"a"}' } }],
+          };
+        }
+        if (callCount === 2) {
+          return {
+            content: "",
+            toolCalls: [{ id: "call_2", type: "function" as const, function: { name: "web_search", arguments: '{"query":"b"}' } }],
+          };
+        }
+        return { content: "done", toolCalls: [] };
+      },
+    },
+    serverToolExecutors: {},
+    webSearchExecutor: async (query) => ({ results: [{ title: query, url: `https://${query}.example`, snippet: "s" }] }),
+  };
+
+  await handleAgentTurn(baseRequest, deps, {
+    onDelta: () => {},
+    onToolCallDelta: () => {},
+    onToolResult: () => {},
+    onSources: (results) => sourcesSeen.push(results),
+  });
+
+  assert.deepEqual(sourcesSeen, [
+    [{ title: "a", url: "https://a.example", snippet: "s" }],
+    [{ title: "a", url: "https://a.example", snippet: "s" }, { title: "b", url: "https://b.example", snippet: "s" }],
+  ]);
 });

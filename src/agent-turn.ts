@@ -2,7 +2,8 @@ import { decide as defaultDecide } from "./made-client.ts";
 import { availableCandidates as defaultAvailableCandidates } from "./candidates.ts";
 import { complete as ollamaComplete, completeStream as ollamaCompleteStream } from "./providers/ollama-client.ts";
 import { complete as deepseekComplete, completeStream as deepseekCompleteStream } from "./providers/deepseek-client.ts";
-import { callWebSearch } from "./mcp/searxng-client.ts";
+import { callWebSearch, type WebSearchResponse, type WebSearchResult } from "./mcp/searxng-client.ts";
+import { formatWebSearchResults } from "./web-search-format.ts";
 import { callScrape } from "./mcp/scrapling-client.ts";
 import { TOOL_DEFS } from "./tools.ts";
 import { estimateContextTokens } from "./token-estimate.ts";
@@ -61,6 +62,7 @@ export interface AgentTurnStreamCallbacks {
   onDelta: (text: string) => void;
   onToolCallDelta: (delta: ToolCallDelta) => void;
   onToolResult: (index: number, name: string, result: string) => void;
+  onSources?: (results: WebSearchResult[]) => void;
   signal?: AbortSignal;
 }
 
@@ -70,6 +72,7 @@ export interface AgentTurnDeps {
   completeByProvider: Record<string, (model: string, messages: ChatMessage[], tools: ToolDef[]) => Promise<CompletionResult>>;
   completeStreamByProvider?: Record<string, StreamCompleteFn>;
   serverToolExecutors: Record<string, (args: Record<string, unknown>) => Promise<string>>;
+  webSearchExecutor: (query: string, maxResults?: number) => Promise<WebSearchResponse>;
 }
 
 const defaultDeps: AgentTurnDeps = {
@@ -84,9 +87,9 @@ const defaultDeps: AgentTurnDeps = {
     deepseek: deepseekCompleteStream,
   },
   serverToolExecutors: {
-    web_search: (args) => callWebSearch(String(args.query)),
     scrape: (args) => callScrape(String(args.url)),
   },
+  webSearchExecutor: (query, maxResults) => callWebSearch(query, maxResults),
 };
 
 function truncateToolResult(result: string): string {
@@ -185,6 +188,8 @@ export async function handleAgentTurn(
   }
 
   let lastNonEmptyText: string | null = null;
+  let citationOffset = 0;
+  const allSources: WebSearchResult[] = [];
 
   for (let i = 0; i < MAX_TURN_ITERATIONS; i++) {
     const currentEstimate = estimateContextTokens("", tools, messages);
@@ -250,13 +255,27 @@ export async function handleAgentTurn(
 
     messages.push({ role: "assistant", content: result.content, tool_calls: result.toolCalls });
     for (const [index, call] of result.toolCalls.entries()) {
-      const executor = deps.serverToolExecutors[call.function.name];
       let toolResult: string;
-      try {
-        const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
-        toolResult = executor ? await executor(args) : `tool ${call.function.name} is not available`;
-      } catch (err) {
-        toolResult = `${call.function.name} failed: ${(err as Error).message}`;
+      if (call.function.name === "web_search") {
+        try {
+          const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+          const maxResults = typeof args.maxResults === "number" ? args.maxResults : undefined;
+          const response = await deps.webSearchExecutor(String(args.query ?? ""), maxResults);
+          toolResult = formatWebSearchResults(response, citationOffset);
+          citationOffset += response.results.length;
+          allSources.push(...response.results);
+          streamCallbacks?.onSources?.(allSources.slice());
+        } catch (err) {
+          toolResult = `web_search failed: ${(err as Error).message}`;
+        }
+      } else {
+        const executor = deps.serverToolExecutors[call.function.name];
+        try {
+          const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+          toolResult = executor ? await executor(args) : `tool ${call.function.name} is not available`;
+        } catch (err) {
+          toolResult = `${call.function.name} failed: ${(err as Error).message}`;
+        }
       }
       streamCallbacks?.onToolResult(index, call.function.name, toolResult);
       messages.push({ role: "tool", content: truncateToolResult(toolResult), tool_call_id: call.id, name: call.function.name });
