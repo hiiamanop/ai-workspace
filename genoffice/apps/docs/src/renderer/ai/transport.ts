@@ -15,56 +15,96 @@ export function createElectronTransport(getSettings: () => AiSettings): AgentTra
   })
 }
 
-/** Transport that calls the backend's /api/agent-turn endpoint (MADE-connected model turn). */
+/** Transport that streams the backend's WebSocket endpoint (MADE-connected model turn). */
 export function createMadeTransport(): AgentTransport {
+  let socket: WebSocket | null = null;
+  let reconnectAttempts = 0;
+
+  function ensureSocket(): WebSocket {
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+      return socket;
+    }
+    const next = new WebSocket(`ws://${location.host}`);
+    next.addEventListener('open', () => {
+      reconnectAttempts = 0;
+    });
+    next.addEventListener('close', () => {
+      if (reconnectAttempts >= 5) return;
+      const delay = 500 * 2 ** reconnectAttempts;
+      reconnectAttempts += 1;
+      setTimeout(ensureSocket, delay);
+    });
+    socket = next;
+    return next;
+  }
+
   return {
     stream(request, callbacks) {
-      let cancelled = false;
+      const ws = ensureSocket();
+      let turnId: string | null = null;
       let done = false;
+      let inToolInputPhase = false;
+
       const finish = (fn: () => void) => {
         if (done) return;
         done = true;
+        ws.removeEventListener('message', handleMessage);
         fn();
       };
 
-      (async () => {
-        try {
-          const res = await fetch("/api/agent-turn", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(request),
-          });
+      function handleMessage(event: MessageEvent) {
+        const msg = JSON.parse(String(event.data));
 
-          if (cancelled) return;
+        if (msg.type === 'turn_started') {
+          turnId = msg.turnId;
+          return;
+        }
+        if (turnId && msg.turnId && msg.turnId !== turnId) return;
 
-          if (!res.ok) {
-            const body = await res.json().catch(() => ({ error: `request failed: ${res.status}` }));
-            finish(() => callbacks.onError(body.error ?? `request failed: ${res.status}`));
+        if (msg.type === 'delta') {
+          callbacks.onDelta(msg.text);
+        } else if (msg.type === 'tool_call_delta') {
+          if (!inToolInputPhase) {
+            inToolInputPhase = true;
+            callbacks.onPhase?.({ kind: 'tool-input' });
+          }
+        } else if (msg.type === 'tool_result') {
+          inToolInputPhase = false;
+        } else if (msg.type === 'done') {
+          if (msg.stopped) {
+            finish(() => callbacks.onDone());
             return;
           }
-
-          const data = (await res.json()) as
-            | { type: "text"; text: string }
-            | { type: "tool_calls"; calls: Parameters<typeof callbacks.onToolCall>[0][]; text?: string };
-
-          if (cancelled) return;
-
-          if (data.type === "text") {
-            if (data.text) callbacks.onDelta(data.text);
+          const result = msg.result as { type: 'text'; text: string } | { type: 'tool_calls'; calls: Parameters<typeof callbacks.onToolCall>[0][]; text?: string };
+          if (result.type === 'text') {
             finish(() => callbacks.onDone());
-          } else if (data.type === "tool_calls") {
-            if (data.text) callbacks.onDelta(data.text);
-            for (const call of data.calls) callbacks.onToolCall(call);
+          } else if (result.type === 'tool_calls') {
+            for (const call of result.calls) callbacks.onToolCall(call);
             finish(() => callbacks.onDone());
           } else {
-            finish(() => callbacks.onError("unexpected response shape from /api/agent-turn"));
+            finish(() => callbacks.onError('unexpected result shape in done event'));
           }
-        } catch (err) {
-          finish(() => callbacks.onError((err as Error).message));
+        } else if (msg.type === 'error') {
+          finish(() => callbacks.onError(msg.error ?? 'unknown streaming error'));
         }
-      })();
+      }
 
-      return { cancel: () => { cancelled = true; finish(() => callbacks.onDone()); } };
+      ws.addEventListener('message', handleMessage);
+
+      const send = () =>
+        ws.send(JSON.stringify({ type: 'agent-turn', system: request.system, messages: request.messages, tools: request.tools }));
+      if (ws.readyState === WebSocket.OPEN) {
+        send();
+      } else {
+        ws.addEventListener('open', send, { once: true });
+      }
+
+      return {
+        cancel: () => {
+          if (turnId) ws.send(JSON.stringify({ type: 'stop', turnId }));
+          finish(() => callbacks.onDone());
+        },
+      };
     },
   };
 }
