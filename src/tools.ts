@@ -5,7 +5,8 @@ export const TOOL_DEFS: Record<string, ToolDef> = {
     type: "function",
     function: {
       name: "web_search",
-      description: "Search the web for current information",
+      description:
+        "Search the web for current information. Results are numbered; when you state a fact drawn from a result, cite it immediately after the sentence using its number in brackets, e.g. [1] or [1][2] for multiple sources.",
       parameters: {
         type: "object",
         properties: { query: { type: "string" } },

@@ -2,7 +2,8 @@ import { decide as defaultDecide } from "./made-client.ts";
 import { availableCandidates as defaultAvailableCandidates, availableToolCandidates as defaultAvailableToolCandidates } from "./candidates.ts";
 import { complete as ollamaComplete, completeStream as ollamaCompleteStream } from "./providers/ollama-client.ts";
 import { complete as deepseekComplete, completeStream as deepseekCompleteStream } from "./providers/deepseek-client.ts";
-import { callWebSearch } from "./mcp/searxng-client.ts";
+import { callWebSearch, type WebSearchResponse, type WebSearchResult } from "./mcp/searxng-client.ts";
+import { formatWebSearchResults } from "./web-search-format.ts";
 import { callScrape } from "./mcp/scrapling-client.ts";
 import { TOOL_DEFS } from "./tools.ts";
 import { estimateContextTokens } from "./token-estimate.ts";
@@ -30,6 +31,7 @@ export interface ChatStreamCallbacks {
   onDelta: (text: string) => void;
   onToolCallDelta: (delta: ToolCallDelta) => void;
   onToolResult: (index: number, name: string, result: string) => void;
+  onSources?: (results: WebSearchResult[]) => void;
   signal?: AbortSignal;
 }
 
@@ -40,6 +42,7 @@ export interface ChatDeps {
   completeByProvider: Record<string, (model: string, messages: ChatMessage[], tools: ToolDef[]) => Promise<CompletionResult>>;
   completeStreamByProvider?: Record<string, StreamCompleteFn>;
   toolExecutors: Record<string, ToolExecutor>;
+  webSearchExecutor: (query: string, maxResults?: number) => Promise<WebSearchResponse>;
 }
 
 const defaultDeps: ChatDeps = {
@@ -55,9 +58,9 @@ const defaultDeps: ChatDeps = {
     deepseek: deepseekCompleteStream,
   },
   toolExecutors: {
-    web_search: (args) => callWebSearch(String(args.query)),
     scrape: (args) => callScrape(String(args.url)),
   },
+  webSearchExecutor: (query, maxResults) => callWebSearch(query, maxResults),
 };
 
 function decideRequest(
@@ -134,6 +137,8 @@ export async function handleChat(
 
   const toolsUsed: string[] = [];
   let lastNonEmptyContent: string | null = null;
+  let citationOffset = 0;
+  const allSources: WebSearchResult[] = [];
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const currentEstimate = estimateContextTokens("", Object.values(TOOL_DEFS), messages);
@@ -191,17 +196,32 @@ export async function handleChat(
     messages.push({ role: "assistant", content: result.content, tool_calls: result.toolCalls });
 
     for (const [index, call] of result.toolCalls.entries()) {
-      const executor = deps.toolExecutors[call.function.name];
       let toolResult: string;
-      if (!executor) {
-        toolResult = `tool ${call.function.name} is not available`;
-      } else {
+      if (call.function.name === "web_search") {
         try {
           const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
-          toolResult = await executor(args);
-          toolsUsed.push(call.function.name);
+          const maxResults = typeof args.maxResults === "number" ? args.maxResults : undefined;
+          const response = await deps.webSearchExecutor(String(args.query ?? ""), maxResults);
+          toolResult = formatWebSearchResults(response, citationOffset);
+          citationOffset += response.results.length;
+          allSources.push(...response.results);
+          streamCallbacks?.onSources?.(allSources.slice());
+          toolsUsed.push("web_search");
         } catch (err) {
-          toolResult = `${call.function.name} failed: ${(err as Error).message}`;
+          toolResult = `web_search failed: ${(err as Error).message}`;
+        }
+      } else {
+        const executor = deps.toolExecutors[call.function.name];
+        if (!executor) {
+          toolResult = `tool ${call.function.name} is not available`;
+        } else {
+          try {
+            const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+            toolResult = await executor(args);
+            toolsUsed.push(call.function.name);
+          } catch (err) {
+            toolResult = `${call.function.name} failed: ${(err as Error).message}`;
+          }
         }
       }
       streamCallbacks?.onToolResult(index, call.function.name, toolResult);
