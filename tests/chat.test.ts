@@ -76,7 +76,7 @@ test("handleChat() skips tool wiring entirely when MADE allows no tools", async 
     toolExecutors: {},
   };
 
-  const result = await handleChat("hello there", deps);
+  const result = await handleChat([{ role: "user", content: "hello there" }], deps);
 
   assert.deepEqual(decideCalls, ["model_selection", "tool_selection"]);
   assert.ok(estimatedTokensSeen.every((n) => n > 0));
@@ -114,7 +114,7 @@ test("handleChat() executes a requested tool call and feeds the result back to t
     },
   };
 
-  const result = await handleChat("what's the weather in jakarta?", deps);
+  const result = await handleChat([{ role: "user", content: "what's the weather in jakarta?" }], deps);
 
   assert.equal(callCount, 2);
   assert.equal(result.reply, "final reply using: search results for jakarta weather");
@@ -150,7 +150,7 @@ test("handleChat() feeds an error string back to the model when a tool executor 
     },
   };
 
-  const result = await handleChat("search something", deps);
+  const result = await handleChat([{ role: "user", content: "search something" }], deps);
 
   assert.match(result.reply, /handled: web_search failed: subprocess failed to spawn/);
   assert.deepEqual(result.toolsUsed, []);
@@ -159,7 +159,7 @@ test("handleChat() feeds an error string back to the model when a tool executor 
 test("handleChat() throws when MADE selects no candidate", async () => {
   await assert.rejects(
     () =>
-      handleChat("hello", {
+      handleChat([{ role: "user", content: "hello" }], {
         ...baseDeps,
         decide: async (request) =>
           request.decision_kind === "model_selection"
@@ -183,7 +183,7 @@ test("handleChat() throws when MADE selects no candidate", async () => {
 test("handleChat() throws when MADE requires human approval", async () => {
   await assert.rejects(
     () =>
-      handleChat("hello", {
+      handleChat([{ role: "user", content: "hello" }], {
         ...baseDeps,
         decide: async (request) =>
           request.decision_kind === "model_selection"
@@ -207,7 +207,7 @@ test("handleChat() throws when MADE requires human approval", async () => {
 test("handleChat() throws when MADE requires human approval for tool_selection", async () => {
   await assert.rejects(
     () =>
-      handleChat("hello", {
+      handleChat([{ role: "user", content: "hello" }], {
         ...baseDeps,
         decide: async (request) =>
           request.decision_kind === "model_selection"
@@ -270,7 +270,7 @@ test("handleChat() switches to a different candidate mid-loop when the estimate 
     },
   };
 
-  const result = await handleChat("search something", deps);
+  const result = await handleChat([{ role: "user", content: "search something" }], deps);
 
   // iteration 0 estimate for this exact message/tool shape is 1115 (fits 1200, no switch yet);
   // after the first tool round-trip, iteration 1's estimate is 1417 (exceeds 1200, triggers the switch).
@@ -309,7 +309,7 @@ test("handleChat() returns the last non-empty content with a note when MADE find
     },
   };
 
-  const result = await handleChat("search something", deps);
+  const result = await handleChat([{ role: "user", content: "search something" }], deps);
 
   assert.equal(result.reply, "partial thought\n\n[context window exhausted — response may be incomplete]");
 });
@@ -344,7 +344,7 @@ test("handleChat() truncates tool results longer than 8000 chars before feeding 
     },
   };
 
-  await handleChat("search something huge", deps);
+  await handleChat([{ role: "user", content: "search something huge" }], deps);
 
   assert.equal(capturedToolContent.length, 8000 + "...[truncated, 9000 chars total]".length);
   assert.ok(capturedToolContent.startsWith("x".repeat(8000)));
@@ -381,7 +381,7 @@ test("handleChat() does not alter tool results at or under 8000 chars", async ()
     },
   };
 
-  await handleChat("search something", deps);
+  await handleChat([{ role: "user", content: "search something" }], deps);
 
   assert.equal(capturedToolContent, shortResult);
 });
@@ -405,7 +405,7 @@ test("handleChat() returns the last non-empty content with a note when the tool 
     },
   };
 
-  const result = await handleChat("loop forever", deps);
+  const result = await handleChat([{ role: "user", content: "loop forever" }], deps);
 
   assert.equal(result.reply, "partial thought\n\n[tool loop limit reached — response may be incomplete]");
 });
@@ -429,7 +429,7 @@ test("handleChat() still throws when the tool loop hits the iteration cap with n
     },
   };
 
-  await assert.rejects(() => handleChat("loop forever", deps), /tool-calling loop exceeded maximum iterations/);
+  await assert.rejects(() => handleChat([{ role: "user", content: "loop forever" }], deps), /tool-calling loop exceeded maximum iterations/);
 });
 
 test("handleChat() does not split a surrogate pair when truncating a tool result", async () => {
@@ -463,7 +463,7 @@ test("handleChat() does not split a surrogate pair when truncating a tool result
     },
   };
 
-  await handleChat("search something with emoji at the truncation boundary", deps);
+  await handleChat([{ role: "user", content: "search something with emoji at the truncation boundary" }], deps);
 
   const markerIndex = capturedToolContent.indexOf("...[truncated");
   const truncatedPortion = capturedToolContent.slice(0, markerIndex);
@@ -473,4 +473,89 @@ test("handleChat() does not split a surrogate pair when truncating a tool result
   assert.equal(truncatedPortion, "x".repeat(7999));
   assert.equal(truncatedPortion.length, 7999);
   assert.ok(capturedToolContent.endsWith(`...[truncated, ${longResult.length} chars total]`));
+});
+
+test("handleChat() calls completeStreamByProvider instead of completeByProvider when streamCallbacks is provided", async () => {
+  const deltas: string[] = [];
+  const deps: ChatDeps = {
+    ...baseDeps,
+    decide: async (request) => (request.decision_kind === "model_selection" ? modelDecision : noToolsDecision()),
+    completeByProvider: {
+      "ollama-local": async () => {
+        throw new Error("should not be called");
+      },
+    },
+    completeStreamByProvider: {
+      "ollama-local": async (_model, _messages, _tools, callbacks) => {
+        callbacks.onDelta("streamed reply");
+        return { content: "streamed reply", toolCalls: [] };
+      },
+    },
+    toolExecutors: {},
+  };
+
+  const result = await handleChat(
+    [{ role: "user", content: "hello" }],
+    deps,
+    { onDelta: (t) => deltas.push(t), onToolCallDelta: () => {}, onToolResult: () => {} }
+  );
+
+  assert.deepEqual(deltas, ["streamed reply"]);
+  assert.equal(result.reply, "streamed reply");
+});
+
+test("handleChat() calls onToolResult after executing a tool when streaming", async () => {
+  let callCount = 0;
+  const toolResults: { index: number; name: string; result: string }[] = [];
+  const deps: ChatDeps = {
+    ...baseDeps,
+    decide: async (request) => (request.decision_kind === "model_selection" ? modelDecision : allowAllToolsDecision()),
+    completeByProvider: {},
+    completeStreamByProvider: {
+      "ollama-local": async (_model, _messages) => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            content: "",
+            toolCalls: [{ id: "call_1", type: "function", function: { name: "web_search", arguments: "{}" } }],
+          };
+        }
+        return { content: "done", toolCalls: [] };
+      },
+    },
+    toolExecutors: { web_search: async () => "search result" },
+  };
+
+  await handleChat(
+    [{ role: "user", content: "search something" }],
+    deps,
+    { onDelta: () => {}, onToolCallDelta: () => {}, onToolResult: (index, name, result) => toolResults.push({ index, name, result }) }
+  );
+
+  assert.deepEqual(toolResults, [{ index: 0, name: "web_search", result: "search result" }]);
+});
+
+test("handleChat() trims history that exceeds HISTORY_BUDGET_TOKENS before calling decide()", async () => {
+  const longHistory = [
+    { role: "user" as const, content: "x".repeat(30_000) },
+    { role: "assistant" as const, content: "y".repeat(30_000) },
+    { role: "user" as const, content: "most recent" },
+  ];
+  let seenMessages: typeof longHistory = [];
+  const deps: ChatDeps = {
+    ...baseDeps,
+    decide: async (request) => (request.decision_kind === "model_selection" ? modelDecision : noToolsDecision()),
+    completeByProvider: {
+      "ollama-local": async (_model, messages) => {
+        seenMessages = messages as typeof longHistory;
+        return { content: "ok", toolCalls: [] };
+      },
+    },
+    toolExecutors: {},
+  };
+
+  await handleChat(longHistory, deps);
+
+  assert.ok(seenMessages.length < longHistory.length);
+  assert.equal(seenMessages[seenMessages.length - 1].content, "most recent");
 });

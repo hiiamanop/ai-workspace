@@ -1,24 +1,44 @@
 import { decide as defaultDecide } from "./made-client.ts";
 import { availableCandidates as defaultAvailableCandidates, availableToolCandidates as defaultAvailableToolCandidates } from "./candidates.ts";
-import { complete as ollamaComplete } from "./providers/ollama-client.ts";
-import { complete as deepseekComplete } from "./providers/deepseek-client.ts";
+import { complete as ollamaComplete, completeStream as ollamaCompleteStream } from "./providers/ollama-client.ts";
+import { complete as deepseekComplete, completeStream as deepseekCompleteStream } from "./providers/deepseek-client.ts";
 import { callWebSearch } from "./mcp/searxng-client.ts";
 import { callScrape } from "./mcp/scrapling-client.ts";
 import { TOOL_DEFS } from "./tools.ts";
 import { estimateContextTokens } from "./token-estimate.ts";
 import { ensureCandidateFits } from "./context-guard.ts";
+import { trimHistory } from "./history-budget.ts";
 import type { CandidateIn, ChatMessage, CompletionResult, DecideRequest, DecideResponse, ToolDef } from "./types.ts";
 
 const MAX_TOOL_ITERATIONS = 5;
 const MAX_TOOL_RESULT_CHARS = 8000;
+const HISTORY_BUDGET_TOKENS = 6000;
 
 export type ToolExecutor = (args: Record<string, unknown>) => Promise<string>;
+
+export type ToolCallDelta = { index: number; id?: string; name?: string; argsFragment?: string };
+
+export type StreamCompleteFn = (
+  model: string,
+  messages: ChatMessage[],
+  tools: ToolDef[],
+  callbacks: { onDelta: (text: string) => void; onToolCallDelta: (delta: ToolCallDelta) => void },
+  signal?: AbortSignal
+) => Promise<CompletionResult>;
+
+export interface ChatStreamCallbacks {
+  onDelta: (text: string) => void;
+  onToolCallDelta: (delta: ToolCallDelta) => void;
+  onToolResult: (index: number, name: string, result: string) => void;
+  signal?: AbortSignal;
+}
 
 export interface ChatDeps {
   decide: (request: DecideRequest) => Promise<DecideResponse>;
   availableCandidates: () => CandidateIn[];
   availableToolCandidates: () => CandidateIn[];
   completeByProvider: Record<string, (model: string, messages: ChatMessage[], tools: ToolDef[]) => Promise<CompletionResult>>;
+  completeStreamByProvider?: Record<string, StreamCompleteFn>;
   toolExecutors: Record<string, ToolExecutor>;
 }
 
@@ -29,6 +49,10 @@ const defaultDeps: ChatDeps = {
   completeByProvider: {
     "ollama-local": ollamaComplete,
     deepseek: deepseekComplete,
+  },
+  completeStreamByProvider: {
+    "ollama-local": ollamaCompleteStream,
+    deepseek: deepseekCompleteStream,
   },
   toolExecutors: {
     web_search: (args) => callWebSearch(String(args.query)),
@@ -67,11 +91,12 @@ function truncateToolResult(result: string): string {
 }
 
 export async function handleChat(
-  message: string,
-  deps: ChatDeps = defaultDeps
+  history: ChatMessage[],
+  deps: ChatDeps = defaultDeps,
+  streamCallbacks?: ChatStreamCallbacks
 ): Promise<{ selectedCandidateId: string; reply: string; toolsUsed: string[] }> {
   const candidates = deps.availableCandidates();
-  const messages: ChatMessage[] = [{ role: "user", content: message }];
+  const messages = trimHistory(history, HISTORY_BUDGET_TOKENS);
 
   const modelDecision = await deps.decide(decideRequest("model_selection", candidates, messages));
 
@@ -88,8 +113,12 @@ export async function handleChat(
   }
 
   let complete = deps.completeByProvider[selected.vendor];
-  if (!complete) {
+  if (!complete && !streamCallbacks) {
     throw new Error(`no provider client registered for vendor ${selected.vendor}`);
+  }
+  let completeStreamFn = deps.completeStreamByProvider?.[selected.vendor];
+  if (streamCallbacks && !completeStreamFn) {
+    throw new Error(`no streaming provider client registered for vendor ${selected.vendor}`);
   }
 
   const toolCandidates = deps.availableToolCandidates();
@@ -130,13 +159,26 @@ export async function handleChat(
     if (capacity.status === "switched") {
       selected = capacity.candidate;
       const nextComplete = deps.completeByProvider[selected.vendor];
-      if (!nextComplete) {
+      if (!nextComplete && !streamCallbacks) {
         throw new Error(`no provider client registered for vendor ${selected.vendor}`);
       }
       complete = nextComplete;
+      const nextCompleteStream = deps.completeStreamByProvider?.[selected.vendor];
+      if (streamCallbacks && !nextCompleteStream) {
+        throw new Error(`no streaming provider client registered for vendor ${selected.vendor}`);
+      }
+      completeStreamFn = nextCompleteStream;
     }
 
-    const result = await complete(selected.id, messages, tools);
+    const result = streamCallbacks
+      ? await completeStreamFn!(
+          selected.id,
+          messages,
+          tools,
+          { onDelta: streamCallbacks.onDelta, onToolCallDelta: streamCallbacks.onToolCallDelta },
+          streamCallbacks.signal
+        )
+      : await complete(selected.id, messages, tools);
 
     if (result.content) {
       lastNonEmptyContent = result.content;
@@ -148,7 +190,7 @@ export async function handleChat(
 
     messages.push({ role: "assistant", content: result.content, tool_calls: result.toolCalls });
 
-    for (const call of result.toolCalls) {
+    for (const [index, call] of result.toolCalls.entries()) {
       const executor = deps.toolExecutors[call.function.name];
       let toolResult: string;
       if (!executor) {
@@ -162,6 +204,7 @@ export async function handleChat(
           toolResult = `${call.function.name} failed: ${(err as Error).message}`;
         }
       }
+      streamCallbacks?.onToolResult(index, call.function.name, toolResult);
       messages.push({ role: "tool", content: truncateToolResult(toolResult), tool_call_id: call.id, name: call.function.name });
     }
   }
