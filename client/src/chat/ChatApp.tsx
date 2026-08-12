@@ -86,8 +86,9 @@ export function ChatApp() {
     } else if (msg.type === "tool_call_delta" || msg.type === "tool_result") {
       setAwaitingFirstToken(false);
     } else if (msg.type === "done") {
-      setMessages((prev) => [...prev, { role: "assistant", content: draftRef.current }]);
+      const finalText = draftRef.current;
       draftRef.current = "";
+      setMessages((prev) => [...prev, { role: "assistant", content: finalText }]);
       setAssistantDraft("");
       setTurnId(null);
       setAwaitingFirstToken(false);

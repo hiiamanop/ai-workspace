@@ -147,11 +147,11 @@ Wiring:
 - Click handling via event delegation: one `onClick` on the message
   container div, `event.target.closest('[data-cite]')` reads the `data-cite`
   attribute, opens a popover component anchored to that chip
-  (`getBoundingClientRect()`), showing the source card(s) — grouped when
-  multiple adjacent `[N][M]` markers point at different sources close
-  together, matching the reference screenshot's "+1" badge and left/right
-  arrow carousel (index/total counter, no external carousel library —
-  a handful of lines of state: `openIndex`, `openSources: WebSearchResult[]`).
+  (`getBoundingClientRect()`), showing that one source's card.
+  **Simplification from the reference screenshot** (confirmed with the
+  user): each `[N]` renders its own independent chip — adjacent `[1][2]`
+  render as two small chips side by side, not a merged "+1" badge with a
+  left/right carousel. No grouping state, no carousel component.
 - Popover shows: source hostname (as the "site name" — no separate favicon
   metadata is fetched), title, `publishedDate` if present (often absent per
   live testing against this project's SearXNG instance — omit the row
@@ -223,12 +223,17 @@ the **docs** app. Reusing it avoids inventing a second protocol:
   `ToolActivity`/`display.items` when a `web_search` tool activity resolves
   during that turn — accumulated the same way `tools: ToolActivity[]`
   already accumulates per entry.
-- The `<Markdown text={entry.text} />` call sites (`AiPanel.tsx:875, 939`)
-  get the same `[N]` → chip treatment as §4, factored into a shared
-  helper if practical (both are React/TSX + `marked`/DOMPurify-based —
-  check during planning whether the docs app's `Markdown` component already
-  wraps the same libraries as `ChatApp.tsx` before deciding whether to share
-  code or duplicate the ~30 lines).
+- GenOffice's `Markdown` component (`genoffice/packages/ui/src/Markdown.tsx`,
+  shared with the slides app) is a small dependency-free React parser — not
+  `marked`/DOMPurify-based like `ChatApp.tsx`. It renders real React nodes
+  (no `dangerouslySetInnerHTML`), so citation chips are added directly as
+  React elements: `renderInline()` gains a case for `[N]` tokens, and the
+  component gains an optional `citations` prop threaded down from
+  `AiPanel.tsx`'s `<Markdown text={entry.text} />` call sites
+  (`AiPanel.tsx:875, 939`). Same per-marker-chip simplification as §4 (no
+  grouping/carousel) — each chip owns its own popover open/close state
+  locally, no lifted state needed. Optional prop keeps the slides app's
+  existing usage unaffected.
 
 ## Error handling
 
