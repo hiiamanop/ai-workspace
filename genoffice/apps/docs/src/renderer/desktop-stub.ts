@@ -127,6 +127,11 @@ async function saveDocxNewImpl(
 
 export { saveDocxNewImpl };
 
+/** Test-only helper: routes to saveDocxImpl if handle exists, else falls back to saveDocxNewImpl */
+export async function saveDocxRouted(path: string, data: ArrayBuffer): Promise<SaveResult> {
+  return currentFileHandle ? saveDocxImpl(path, data) : saveDocxNewImpl(path, data, undefined);
+}
+
 const desktop: DesktopApi = {
   getLanguage: async () => "en",
   onLanguageChanged: noop,
@@ -139,7 +144,8 @@ const desktop: DesktopApi = {
   consumeNewBlankDoc: async () => true,
   onOpenDocx: noop,
   onRenamedDocx: noop,
-  saveDocx: async (path, data) => saveDocxImpl(path, data),
+  saveDocx: async (path, data) =>
+    currentFileHandle ? saveDocxImpl(path, data) : saveDocxNewImpl(path, data, undefined),
   writeRecoveryCopy: async () => ({ ok: false }),
   onTeardown: noop,
   saveDocxAs: async (defaultName, data) =>

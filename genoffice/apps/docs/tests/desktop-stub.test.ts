@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { openDocxImpl, saveDocxImpl, saveDocxAsImpl, saveDocxNewImpl, resetCurrentFileHandleForTests } from '../src/renderer/desktop-stub'
+import { openDocxImpl, saveDocxImpl, saveDocxAsImpl, saveDocxNewImpl, saveDocxRouted, resetCurrentFileHandleForTests } from '../src/renderer/desktop-stub'
 
 function makeFile(name: string, bytes: Uint8Array): File {
   return new File([bytes as BlobPart], name, { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })
@@ -78,6 +78,10 @@ describe('desktop-stub: File System Access API path', () => {
 })
 
 describe('desktop-stub: fallback path (no File System Access API)', () => {
+  beforeEach(() => {
+    resetCurrentFileHandleForTests()
+  })
+
   it('saveDocxNewImpl() builds a Blob and triggers a download without throwing', async () => {
     const clickSpy = vi.fn()
     const originalCreateElement = document.createElement.bind(document)
@@ -94,6 +98,30 @@ describe('desktop-stub: fallback path (no File System Access API)', () => {
     const result = await saveDocxNewImpl('untitled.docx', new Uint8Array([1, 2]).buffer, undefined)
 
     expect(result).toEqual({ ok: true, path: 'untitled.docx' })
+    expect(clickSpy).toHaveBeenCalled()
+    expect(createObjectURL).toHaveBeenCalled()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock')
+
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('saveDocxRouted() falls back to Blob download when currentFileHandle is null', async () => {
+    const clickSpy = vi.fn()
+    const originalCreateElement = document.createElement.bind(document)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      const el = originalCreateElement(tag) as any
+      if (tag === 'a') el.click = clickSpy
+      return el
+    })
+    const createObjectURL = vi.fn().mockReturnValue('blob:mock')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
+
+    const result = await saveDocxRouted('document.docx', new Uint8Array([5, 6, 7]).buffer)
+
+    expect(result).toEqual({ ok: true, path: 'document.docx' })
     expect(clickSpy).toHaveBeenCalled()
     expect(createObjectURL).toHaveBeenCalled()
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock')
