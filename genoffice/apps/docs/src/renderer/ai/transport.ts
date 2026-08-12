@@ -49,7 +49,13 @@ export function createMadeTransport(): AgentTransport {
         if (done) return;
         done = true;
         ws.removeEventListener('message', handleMessage);
+        ws.removeEventListener('open', send);
+        ws.removeEventListener('close', handleClose);
         fn();
+      };
+
+      const handleClose = () => {
+        finish(() => callbacks.onError('WebSocket connection lost during streaming'));
       };
 
       function handleMessage(event: MessageEvent) {
@@ -90,6 +96,7 @@ export function createMadeTransport(): AgentTransport {
       }
 
       ws.addEventListener('message', handleMessage);
+      ws.addEventListener('close', handleClose);
 
       const send = () =>
         ws.send(JSON.stringify({ type: 'agent-turn', system: request.system, messages: request.messages, tools: request.tools }));
