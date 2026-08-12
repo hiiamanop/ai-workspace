@@ -1,11 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "../src/server.ts";
+import type { ChatMessage } from "../src/types.ts";
 
 test("POST /api/chat returns the handler's result as JSON", async () => {
-  const server = createServer(async (message: string) => ({
+  const server = createServer(async (messages: ChatMessage[]) => ({
     selectedCandidateId: "gemma4:12b",
-    reply: `echo: ${message}`,
+    reply: `echo: ${messages[0].content}`,
+    toolsUsed: [],
   }));
   server.listen(0);
   const port = (server.address() as { port: number }).port;
@@ -13,19 +15,20 @@ test("POST /api/chat returns the handler's result as JSON", async () => {
   const res = await fetch(`http://localhost:${port}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ message: "hi" }),
+    body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }),
   });
   const body = await res.json();
 
   assert.equal(res.status, 200);
-  assert.deepEqual(body, { selectedCandidateId: "gemma4:12b", reply: "echo: hi" });
+  assert.deepEqual(body, { selectedCandidateId: "gemma4:12b", reply: "echo: hi", toolsUsed: [] });
   server.close();
 });
 
-test("POST /api/chat with missing message returns 400", async () => {
-  const server = createServer(async (message: string) => ({
+test("POST /api/chat with missing messages returns 400", async () => {
+  const server = createServer(async (messages: ChatMessage[]) => ({
     selectedCandidateId: "x",
-    reply: message,
+    reply: String(messages.length),
+    toolsUsed: [],
   }));
   server.listen(0);
   const port = (server.address() as { port: number }).port;
@@ -50,7 +53,7 @@ test("POST /api/chat returns 500 with the error message when the handler throws"
   const res = await fetch(`http://localhost:${port}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ message: "hi" }),
+    body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }),
   });
   const body = await res.json();
 

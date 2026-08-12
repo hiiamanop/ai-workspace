@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { handleChat } from "./chat.ts";
 import { handleAgentTurn } from "./agent-turn.ts";
 import type { AgentTurnRequest } from "./agent-turn.ts";
+import type { ChatMessage } from "./types.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST_DIR = path.join(__dirname, "..", "client", "dist");
@@ -34,7 +35,10 @@ async function serveStatic(res: http.ServerResponse, relativePath: string): Prom
   }
 }
 
-export function createServer(handleChatFn: typeof handleChat = handleChat): http.Server {
+export function createServer(
+  handleChatFn: typeof handleChat = handleChat,
+  handleAgentTurnFn: typeof handleAgentTurn = handleAgentTurn
+): http.Server {
   return http.createServer(async (req, res) => {
     try {
       if (req.method === "POST" && req.url === "/api/chat") {
@@ -42,23 +46,23 @@ export function createServer(handleChatFn: typeof handleChat = handleChat): http
         for await (const chunk of req) chunks.push(chunk as Buffer);
         const raw = Buffer.concat(chunks).toString("utf8");
 
-        let message: unknown;
+        let messages: unknown;
         try {
-          message = JSON.parse(raw).message;
+          messages = JSON.parse(raw).messages;
         } catch {
           res.writeHead(400, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: "invalid JSON body" }));
           return;
         }
 
-        if (typeof message !== "string" || message.length === 0) {
+        if (!Array.isArray(messages) || messages.length === 0) {
           res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: "message field is required" }));
+          res.end(JSON.stringify({ error: "messages field is required" }));
           return;
         }
 
         try {
-          const result = await handleChatFn(message);
+          const result = await handleChatFn(messages as ChatMessage[]);
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify(result));
         } catch (err) {
@@ -89,7 +93,7 @@ export function createServer(handleChatFn: typeof handleChat = handleChat): http
         }
 
         try {
-          const result = await handleAgentTurn(body);
+          const result = await handleAgentTurnFn(body);
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify(result));
         } catch (err) {
