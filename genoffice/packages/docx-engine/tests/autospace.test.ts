@@ -59,3 +59,58 @@ describe('style-chain inheritance', () => {
     expect(block.format?.autoSpace).toBe(true)
   })
 })
+
+const FORMATTED_STYLE =
+  '<w:style w:type="paragraph" w:styleId="Formatted"><w:name w:val="Formatted"/>' +
+  '<w:basedOn w:val="Normal"/><w:pPr>' +
+  '<w:jc w:val="center"/>' +
+  '<w:spacing w:before="240" w:after="120" w:line="360" w:lineRule="auto"/>' +
+  '<w:ind w:left="720" w:right="360" w:firstLine="240"/>' +
+  '<w:keepNext/><w:keepLines/><w:contextualSpacing/>' +
+  '</w:pPr></w:style>'
+
+describe('style-chain inheritance: paragraph-format properties beyond autoSpace', () => {
+  it('align from the style reaches the paragraph', async () => {
+    const block = await parseFirst('<w:pStyle w:val="Formatted"/>', FORMATTED_STYLE)
+    expect(block.format?.align).toBe('center')
+  })
+
+  it('spaceBefore/spaceAfter from the style reach the paragraph', async () => {
+    const block = await parseFirst('<w:pStyle w:val="Formatted"/>', FORMATTED_STYLE)
+    expect(block.format?.spaceBefore).toBe(240)
+    expect(block.format?.spaceAfter).toBe(120)
+  })
+
+  it('lineSpacing/lineRule/lineRawTwips from the style reach the paragraph', async () => {
+    const block = await parseFirst('<w:pStyle w:val="Formatted"/>', FORMATTED_STYLE)
+    expect(block.format?.lineSpacing).toBe(1.5)
+    expect(block.format?.lineRule).toBe('auto')
+    expect(block.format?.lineRawTwips).toBe(360)
+  })
+
+  it('indentLeft/indentRight/indentFirstLine from the style reach the paragraph', async () => {
+    const block = await parseFirst('<w:pStyle w:val="Formatted"/>', FORMATTED_STYLE)
+    expect(block.format?.indentLeft).toBe(720)
+    expect(block.format?.indentRight).toBe(360)
+    expect(block.format?.indentFirstLine).toBe(240)
+  })
+
+  it('keepNext/keepLines/contextualSpacing from the style reach the paragraph', async () => {
+    const block = await parseFirst('<w:pStyle w:val="Formatted"/>', FORMATTED_STYLE)
+    expect(block.format?.keepNext).toBe(true)
+    expect(block.format?.keepLines).toBe(true)
+    expect(block.format?.contextualSpacing).toBe(true)
+  })
+
+  it('a direct paragraph override wins over the style for every property', async () => {
+    const block = await parseFirst(
+      '<w:pStyle w:val="Formatted"/><w:jc w:val="right"/><w:ind w:left="100"/>',
+      FORMATTED_STYLE,
+    )
+    expect(block.format?.align).toBe('right')
+    expect(block.format?.indentLeft).toBe(100)
+    // untouched-by-the-override properties still inherit from the style
+    expect(block.format?.spaceBefore).toBe(240)
+    expect(block.format?.keepNext).toBe(true)
+  })
+})

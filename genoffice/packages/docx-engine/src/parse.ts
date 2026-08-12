@@ -904,10 +904,51 @@ function buildTextParagraph(
   const pPr = findChild(pNode, 'w:pPr')
   const styleId = pPr ? attrsOf(findChild(pPr, 'w:pStyle') ?? {})['w:val'] : undefined
   let format = pPr ? extractParaFormat(pPr) : undefined
-  // style-chain autoSpace off reaches the block: the renderer reads it per paragraph
-  if (format?.autoSpace === undefined && styleId) {
-    if (ctx.styles.get(styleId)?.display?.autoSpace === false) {
+  // Paragraph-format properties that come purely from the paragraph's style (no direct
+  // override) are already resolved correctly for on-screen CSS rendering via
+  // styleDisplayOf()'s basedOn-chain walk, but extractParaFormat() only ever reads the
+  // paragraph's own w:pPr — so code reading Block.format directly (toolbar active-state,
+  // AI tools, .docx export) saw them as absent. Pull each one down here the same way
+  // autoSpace already was, so Block.format matches what the user actually sees.
+  const styleDisplay = styleId ? ctx.styles.get(styleId)?.display : undefined
+  if (styleDisplay) {
+    if (format?.autoSpace === undefined && styleDisplay.autoSpace === false) {
       format = { ...(format ?? {}), autoSpace: false }
+    }
+    if (format?.align === undefined && styleDisplay.align !== undefined) {
+      format = { ...(format ?? {}), align: styleDisplay.align }
+    }
+    if (format?.spaceBefore === undefined && styleDisplay.spaceBeforeTwips !== undefined) {
+      format = { ...(format ?? {}), spaceBefore: styleDisplay.spaceBeforeTwips }
+    }
+    if (format?.spaceAfter === undefined && styleDisplay.spaceAfterTwips !== undefined) {
+      format = { ...(format ?? {}), spaceAfter: styleDisplay.spaceAfterTwips }
+    }
+    if (format?.lineSpacing === undefined && styleDisplay.lineSpacing !== undefined) {
+      format = {
+        ...(format ?? {}),
+        lineSpacing: styleDisplay.lineSpacing,
+        lineRule: styleDisplay.lineRule,
+        lineRawTwips: styleDisplay.lineRawTwips,
+      }
+    }
+    if (format?.indentLeft === undefined && styleDisplay.indentLeftTwips !== undefined) {
+      format = { ...(format ?? {}), indentLeft: styleDisplay.indentLeftTwips }
+    }
+    if (format?.indentRight === undefined && styleDisplay.indentRightTwips !== undefined) {
+      format = { ...(format ?? {}), indentRight: styleDisplay.indentRightTwips }
+    }
+    if (format?.indentFirstLine === undefined && styleDisplay.indentFirstLineTwips !== undefined) {
+      format = { ...(format ?? {}), indentFirstLine: styleDisplay.indentFirstLineTwips }
+    }
+    if (format?.keepNext === undefined && styleDisplay.keepNext) {
+      format = { ...(format ?? {}), keepNext: true }
+    }
+    if (format?.keepLines === undefined && styleDisplay.keepLines) {
+      format = { ...(format ?? {}), keepLines: true }
+    }
+    if (format?.contextualSpacing === undefined && styleDisplay.contextualSpacing) {
+      format = { ...(format ?? {}), contextualSpacing: true }
     }
   }
   const rawPPr = rawPPrOf(xml)
