@@ -13,7 +13,7 @@ import { DOCS_AGENT_MAX_TURNS, DOCS_CONTINUE_INSTRUCTION } from './continuation'
 import { createFilesSkill } from './files-skill'
 import { createMadeTransport } from './transport'
 import { useI18n, t as tModule, aiLangDirective, type StringKey } from '../i18n/locale'
-import { Markdown } from '@genoffice/ui'
+import { Markdown, type MarkdownCitation } from '@genoffice/ui'
 import { AiComposer, AiTypingIndicator } from '@genoffice/ui'
 import { GensparkMark } from '../components/icons'
 import sendEnterOn from '../assets/send-enter-on.png'
@@ -75,6 +75,8 @@ interface ChatEntry {
   loginRequired?: boolean
   /** tool executions performed during this assistant turn */
   tools?: ToolActivity[]
+  /** web_search sources accumulated during this assistant turn, for inline [N] citation chips */
+  citations?: MarkdownCitation[]
 }
 
 /** clickable starter prompts for the empty state (fill the input, do not send) —
@@ -532,6 +534,15 @@ export function AiPanel({
               ],
             }
           })
+          if (call.name === 'web_search' && execution.display?.kind === 'links' && execution.display.items) {
+            const newCitations: MarkdownCitation[] = execution.display.items.map((item) => ({
+              title: item.title ?? '',
+              url: item.url,
+              snippet: item.snippet,
+              publishedDate: item.publishedDate,
+            }))
+            patchLastAssistant((last) => ({ citations: [...(last.citations ?? []), ...newCitations] }))
+          }
         },
         onTurnEnd: () => {
           patchLastAssistant({ streaming: false })
@@ -872,7 +883,7 @@ export function AiPanel({
             {historicChat.map((entry, i) => (
               <div key={`h${i}`} className={`ai-msg ai-msg-${entry.role} ai-msg-historic`}>
                 {entry.tools && entry.tools.length > 0 && <ToolChipList tools={entry.tools} />}
-                {entry.text && <Markdown text={entry.text} />}
+                {entry.text && <Markdown text={entry.text} citations={entry.citations} />}
               </div>
             ))}
             <div className="ai-history-sep">{t('aiHistorySep')}</div>
@@ -936,7 +947,7 @@ export function AiPanel({
                   />
                 </span>
               ) : entry.role === 'assistant' ? (
-                <Markdown text={entry.text} />
+                <Markdown text={entry.text} citations={entry.citations} />
               ) : (
                 entry.text
               )}

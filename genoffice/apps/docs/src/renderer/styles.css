@@ -4654,6 +4654,57 @@ body.docs-crop-active
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 }
 
+.ai-cite-wrap {
+  position: relative;
+  display: inline-block;
+}
+.ai-cite {
+  display: inline-flex;
+  cursor: pointer;
+  vertical-align: super;
+  margin: 0 1px;
+}
+.ai-cite-fav {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+.ai-cite-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+}
+.ai-cite-card {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 11;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--hover);
+  border-radius: 8px;
+  padding: 10px;
+  min-width: 200px;
+  max-width: 280px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+.ai-cite-source {
+  font-size: 11px;
+  opacity: 0.7;
+}
+.ai-cite-title {
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+}
+.ai-cite-date {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
 /* User pill: gray, fully rounded (no tail) */
 .ai-msg-user {
   align-self: flex-end;

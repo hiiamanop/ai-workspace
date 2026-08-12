@@ -1,7 +1,7 @@
 export { AiComposer } from './AiComposer'
 export { AiTypingIndicator } from './AiTypingIndicator'
 export { IconSend, IconStop, type IconProps } from './icons'
-export { Markdown } from './Markdown'
+export { Markdown, type MarkdownCitation } from './Markdown'
 export {
   WORDART_PRESETS,
   wordArtSolidColor,
