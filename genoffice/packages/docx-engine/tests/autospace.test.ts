@@ -113,4 +113,14 @@ describe('style-chain inheritance: paragraph-format properties beyond autoSpace'
     expect(block.format?.spaceBefore).toBe(240)
     expect(block.format?.keepNext).toBe(true)
   })
+
+  const RTL_STYLE =
+    '<w:style w:type="paragraph" w:styleId="RtlHeading"><w:name w:val="Rtl Heading"/>' +
+    '<w:basedOn w:val="Normal"/><w:pPr><w:jc w:val="right"/></w:pPr></w:style>'
+
+  it('style-inherited align is bidi-corrected for a paragraph with direct w:bidi', async () => {
+    const block = await parseFirst('<w:bidi/><w:pStyle w:val="RtlHeading"/>', RTL_STYLE)
+    // the style says "right", but this paragraph is bidi — visual direction mirrors it to "left"
+    expect(block.format?.align).toBe('left')
+  })
 })

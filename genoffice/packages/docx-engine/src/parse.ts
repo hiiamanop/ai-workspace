@@ -916,7 +916,11 @@ function buildTextParagraph(
       format = { ...(format ?? {}), autoSpace: false }
     }
     if (format?.align === undefined && styleDisplay.align !== undefined) {
-      format = { ...(format ?? {}), align: styleDisplay.align }
+      let styleAlign = styleDisplay.align
+      if (format?.bidi && (styleAlign === 'left' || styleAlign === 'right')) {
+        styleAlign = styleAlign === 'left' ? 'right' : 'left'
+      }
+      format = { ...(format ?? {}), align: styleAlign }
     }
     if (format?.spaceBefore === undefined && styleDisplay.spaceBeforeTwips !== undefined) {
       format = { ...(format ?? {}), spaceBefore: styleDisplay.spaceBeforeTwips }
