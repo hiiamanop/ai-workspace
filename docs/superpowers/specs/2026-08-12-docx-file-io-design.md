@@ -129,3 +129,19 @@ per property, not a redesign.
 - True "save without re-picking" on Firefox/Safari (File System Access API
   limitation, not fixable from this codebase).
 - Cloud deployment.
+- **Deferred during final review (2026-08-12):** the paragraph-format
+  inheritance fix (§5) makes style-derived values visible in `Block.format`,
+  which means `mergePPrFormat` now sees those fields as "changed" the moment
+  *any* property on that paragraph is directly edited and saved — so editing
+  one property (e.g. alignment) on a paragraph whose other formatting comes
+  purely from its style bakes that style's spacing/indent/line-spacing values
+  in as direct per-paragraph overrides on save, silently detaching the
+  paragraph from future style edits. Rendering is unaffected (identical
+  output at save time); only future style-inheritance behavior changes.
+  Root cause: `ParaFormat` has no way to distinguish "value came from the
+  style" from "value is a direct override" — a real fix needs that
+  distinction at the type level (e.g. a parallel per-field source map),
+  which is a bigger change than was safe to make inside this plan's fix
+  wave. Revisit as a dedicated follow-up if it causes a real user-facing
+  complaint (a style edit not propagating to a paragraph the user never
+  meant to detach).
