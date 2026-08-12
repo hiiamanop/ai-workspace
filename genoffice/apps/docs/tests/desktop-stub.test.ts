@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { openDocxImpl, saveDocxImpl, saveDocxAsImpl, saveDocxNewImpl, saveDocxRouted, resetCurrentFileHandleForTests } from '../src/renderer/desktop-stub'
+import { openDocxImpl, openDocxViaInputForTests, saveDocxImpl, saveDocxAsImpl, saveDocxNewImpl, routedSaveDocx, resetCurrentFileHandleForTests } from '../src/renderer/desktop-stub'
 
 function makeFile(name: string, bytes: Uint8Array): File {
   return new File([bytes as BlobPart], name, { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })
@@ -75,6 +75,32 @@ describe('desktop-stub: File System Access API path', () => {
 
     expect(result).toEqual({ ok: false, error: 'disk full' })
   })
+
+  it('opening a second file (e.g. Review > Compare) does not hijack the first file\'s save handle', async () => {
+    const fileA = makeFile('A.docx', SAMPLE_BYTES)
+    const writeA = vi.fn()
+    const closeA = vi.fn()
+    const handleA = { getFile: async () => fileA, createWritable: async () => ({ write: writeA, close: closeA }) }
+
+    const fileB = makeFile('B.docx', SAMPLE_BYTES)
+    const writeB = vi.fn()
+    const closeB = vi.fn()
+    const handleB = { getFile: async () => fileB, createWritable: async () => ({ write: writeB, close: closeB }) }
+
+    // real "Open" of A
+    await openDocxImpl(vi.fn().mockResolvedValue([handleA]))
+    // Review > Compare picking B — from openDocxImpl's point of view this looks identical to a real open
+    await openDocxImpl(vi.fn().mockResolvedValue([handleB]))
+
+    const newBytes = new Uint8Array([9, 9]).buffer
+    const result = await saveDocxImpl('A.docx', newBytes)
+
+    expect(result).toEqual({ ok: true, path: 'A.docx' })
+    expect(writeA).toHaveBeenCalledWith(newBytes)
+    expect(closeA).toHaveBeenCalled()
+    expect(writeB).not.toHaveBeenCalled()
+    expect(closeB).not.toHaveBeenCalled()
+  })
 })
 
 describe('desktop-stub: fallback path (no File System Access API)', () => {
@@ -100,13 +126,14 @@ describe('desktop-stub: fallback path (no File System Access API)', () => {
     expect(result).toEqual({ ok: true, path: 'untitled.docx' })
     expect(clickSpy).toHaveBeenCalled()
     expect(createObjectURL).toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 0))
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock')
 
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
-  it('saveDocxRouted() falls back to Blob download when currentFileHandle is null', async () => {
+  it('routedSaveDocx() falls back to Blob download when no handle is open for the path', async () => {
     const clickSpy = vi.fn()
     const originalCreateElement = document.createElement.bind(document)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -119,14 +146,39 @@ describe('desktop-stub: fallback path (no File System Access API)', () => {
     const revokeObjectURL = vi.fn()
     vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
 
-    const result = await saveDocxRouted('document.docx', new Uint8Array([5, 6, 7]).buffer)
+    const result = await routedSaveDocx('document.docx', new Uint8Array([5, 6, 7]).buffer)
 
     expect(result).toEqual({ ok: true, path: 'document.docx' })
     expect(clickSpy).toHaveBeenCalled()
     expect(createObjectURL).toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 0))
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock')
 
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('openDocxViaInput() reads the picked file via <input type=file> and returns name/data/hash', async () => {
+    const file = makeFile('report.docx', SAMPLE_BYTES)
+    const originalCreateElement = document.createElement.bind(document)
+    let capturedInput: HTMLInputElement | undefined
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      const el = originalCreateElement(tag) as any
+      if (tag === 'input') {
+        capturedInput = el as HTMLInputElement
+        Object.defineProperty(el, 'files', { value: [file], configurable: true })
+        el.click = () => {
+          capturedInput?.onchange?.(new Event('change'))
+        }
+      }
+      return el
+    })
+
+    const result = await openDocxViaInputForTests()
+
+    expect(result).toEqual({ path: 'report.docx', name: 'report.docx', data: await file.arrayBuffer(), hash: SAMPLE_HASH })
+
+    vi.restoreAllMocks()
   })
 })

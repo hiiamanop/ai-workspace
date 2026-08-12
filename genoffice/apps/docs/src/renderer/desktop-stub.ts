@@ -1,6 +1,7 @@
 import type { DesktopApi } from "../shared/ipc";
 import type { OpenFileResult } from "../shared/ipc";
 import type { ProjectApi, ProjectSummary } from "@genoffice/project-store";
+import { showToast } from "./components/toast-bus";
 
 const NOT_AVAILABLE = "not available in the web build";
 const noop = (): (() => void) => () => {};
@@ -10,12 +11,16 @@ const DOCX_ACCEPT = {
   accept: { "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"] },
 };
 
-/** the currently open document's writable handle — one document per browser tab, matching how the app already behaves */
-let currentFileHandle: FileSystemFileHandle | null = null;
+/** writable handles for every file opened this session, keyed by file name — so a second, unrelated
+ * open (e.g. Review ▸ Compare picking a diff target) can never clobber the handle Save should use for
+ * the actually-open document; each save looks its own handle up by the path it was asked to save. */
+const fileHandles = new Map<string, FileSystemFileHandle>();
 
 export function resetCurrentFileHandleForTests(): void {
-  currentFileHandle = null;
+  fileHandles.clear();
 }
+
+let fallbackSaveNoticeShown = false;
 
 async function sha256Hex(data: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", data);
@@ -34,11 +39,12 @@ export async function openDocxImpl(
     const [handle] = await showOpenFilePicker({ types: [DOCX_ACCEPT] });
     const file = await handle.getFile();
     const data = await file.arrayBuffer();
-    currentFileHandle = handle;
+    fileHandles.set(file.name, handle);
     return { path: file.name, name: file.name, data, hash: await sha256Hex(data) };
   } catch (err) {
     if (isAbort(err)) return null;
-    throw err;
+    showToast((err as Error).message, "error");
+    return null;
   }
 }
 
@@ -58,21 +64,29 @@ function openDocxViaInput(): Promise<OpenFileResult | null> {
       file
         .arrayBuffer()
         .then(async (data) => resolve({ path: file.name, name: file.name, data, hash: await sha256Hex(data) }))
-        .catch(reject);
+        .catch((err) => {
+          showToast((err as Error).message, "error");
+          resolve(null);
+        });
     };
     input.click();
   });
 }
 
+/** test-only alias so `tests/desktop-stub.test.ts` can exercise the `<input type=file>` fallback path directly */
+export const openDocxViaInputForTests = openDocxViaInput;
+
 type SaveResult = { ok: boolean; path?: string; error?: string };
 
-/** writes to `currentFileHandle` (set by a prior open/save-as/save-new) — no picker prompt */
+/** writes to the handle registered for `path` (set by a prior open/save-as/save-new of that exact
+ * file name) — no picker prompt */
 export async function saveDocxImpl(path: string, data: ArrayBuffer): Promise<SaveResult> {
-  if (!currentFileHandle) {
+  const handle = fileHandles.get(path);
+  if (!handle) {
     return { ok: false, error: "no open file handle to save to" };
   }
   try {
-    const writable = await currentFileHandle.createWritable();
+    const writable = await handle.createWritable();
     await writable.write(data);
     await writable.close();
     return { ok: true, path };
@@ -92,7 +106,7 @@ export async function saveDocxAsImpl(
     const writable = await handle.createWritable();
     await writable.write(data);
     await writable.close();
-    currentFileHandle = handle;
+    fileHandles.set(defaultName, handle);
     return { ok: true, path: defaultName };
   } catch (err) {
     if (isAbort(err)) return { ok: false };
@@ -117,8 +131,15 @@ async function saveDocxNewImpl(
     const link = document.createElement("a");
     link.href = url;
     link.download = defaultName;
+    if (!fallbackSaveNoticeShown) {
+      fallbackSaveNoticeShown = true;
+      showToast(
+        "This browser can't save directly to your original file — each save downloads a fresh copy instead.",
+        "error",
+      );
+    }
     link.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
     return { ok: true, path: defaultName };
   } catch (err) {
     return { ok: false, error: (err as Error).message };
@@ -127,9 +148,10 @@ async function saveDocxNewImpl(
 
 export { saveDocxNewImpl };
 
-/** Test-only helper: routes to saveDocxImpl if handle exists, else falls back to saveDocxNewImpl */
-export async function saveDocxRouted(path: string, data: ArrayBuffer): Promise<SaveResult> {
-  return currentFileHandle ? saveDocxImpl(path, data) : saveDocxNewImpl(path, data, undefined);
+/** Routes a save to the existing handle for `path` when one is open, otherwise falls back to a
+ * fresh save (picker or download). Used both by `desktop.saveDocx` and directly by tests. */
+export async function routedSaveDocx(path: string, data: ArrayBuffer): Promise<SaveResult> {
+  return fileHandles.has(path) ? saveDocxImpl(path, data) : saveDocxNewImpl(path, data, undefined);
 }
 
 const desktop: DesktopApi = {
@@ -144,8 +166,7 @@ const desktop: DesktopApi = {
   consumeNewBlankDoc: async () => true,
   onOpenDocx: noop,
   onRenamedDocx: noop,
-  saveDocx: async (path, data) =>
-    currentFileHandle ? saveDocxImpl(path, data) : saveDocxNewImpl(path, data, undefined),
+  saveDocx: routedSaveDocx,
   writeRecoveryCopy: async () => ({ ok: false }),
   onTeardown: noop,
   saveDocxAs: async (defaultName, data) =>
