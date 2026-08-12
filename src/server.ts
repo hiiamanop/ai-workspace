@@ -115,7 +115,7 @@ function startTurn(
       }
     })
     .finally(() => {
-      setTimeout(() => turns.delete(turnId), TURN_EVICT_MS);
+      setTimeout(() => turns.delete(turnId), TURN_EVICT_MS).unref();
     });
 }
 
