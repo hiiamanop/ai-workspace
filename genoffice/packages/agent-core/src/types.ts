@@ -44,7 +44,7 @@ export type AgentMessage =
 export interface ToolDisplay {
   kind: 'images' | 'links' | 'text'
   /** entry list for images / links modes */
-  items?: Array<{ url: string; title?: string; thumb?: string }>
+  items?: Array<{ url: string; title?: string; thumb?: string; snippet?: string; publishedDate?: string }>
   /** extra text for text mode */
   text?: string
 }

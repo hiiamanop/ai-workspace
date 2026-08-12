@@ -1,6 +1,7 @@
 import type { Editor } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import type { ChartDisplay, NewChart } from '@genoffice/docx-engine'
+import type { ToolDisplay } from '@genoffice/agent-core'
 import type { AgentToolCall, AgentToolDef } from '../../shared/ipc'
 import { t } from '../i18n/locale'
 import { executeCommands, type Command, type CommandEnvelope } from './commands'
@@ -24,6 +25,9 @@ import {
  */
 
 const READ_MAX_CHARS = 24_000
+
+/** Running citation number across every web_search call in this module's lifetime (page/session scoped — simplest correct behavior, avoids threading turn-boundary state through the shared AgentSkill interface) */
+let webSearchCitationOffset = 0
 
 export const AGENT_TOOLS: AgentToolDef[] = [
   {
@@ -101,7 +105,7 @@ export const AGENT_TOOLS: AgentToolDef[] = [
   {
     name: 'web_search',
     description:
-      'Search the web for textual information (references/data/facts). Use when you need up-to-date information or are unsure about a fact. Returns titles/links/snippets.',
+      'Search the web for textual information (references/data/facts). Use when you need up-to-date information or are unsure about a fact. Returns titles/links/snippets. Results are numbered; when you state a fact drawn from a result, cite it immediately after the sentence using its number in brackets, e.g. [1] or [1][2] for multiple sources.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -221,6 +225,8 @@ export interface ToolExecution {
   mutated: boolean
   /** short human-readable label for the chat activity chip */
   summary: string
+  /** UI-only source list for the web_search tool; never sent back to the model */
+  display?: ToolDisplay
 }
 
 const fail = (summary: string, output: string): ToolExecution => ({
@@ -301,15 +307,21 @@ async function executeAsyncTool(
           `web search failed (service error, not an empty result — you may retry): ${r.error ?? 'unknown error'}`,
         )
       }
+      const offset = webSearchCitationOffset
+      webSearchCitationOffset += r.results.length
       const lines: string[] = []
       if (r.answer) lines.push(`Direct answer: ${r.answer}\n`)
       r.results.forEach((it, i) =>
-        lines.push(`${i + 1}. ${it.title}\n   ${it.url}\n   ${it.snippet}`),
+        lines.push(`[${offset + i + 1}] ${it.title}\n   ${it.url}\n   ${it.snippet}`),
       )
       return {
         output: lines.join('\n') || '(no results)',
         mutated: false,
         summary: t('aiSumWebSearchDone', { query, count: r.results.length }),
+        display: {
+          kind: 'links',
+          items: r.results.map((it) => ({ url: it.url, title: it.title, snippet: it.snippet })),
+        },
       }
     }
     case 'image_search': {
