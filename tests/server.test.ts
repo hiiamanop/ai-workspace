@@ -105,6 +105,99 @@ test("WS: chat turn streams delta events then a done event", async () => {
   assert.deepEqual(types, ["delta", "delta", "done"]);
 });
 
+test("WS: chat turn emits a sources event when the handler's streamCallbacks.onSources fires", async () => {
+  const server = createServer(async (_messages: ChatMessage[], _deps, streamCallbacks) => {
+    streamCallbacks?.onSources?.([{ title: "T", url: "https://x.example", snippet: "s" }]);
+    streamCallbacks?.onDelta("done");
+    return { selectedCandidateId: "x", reply: "done", toolsUsed: [] };
+  });
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const ws = new WebSocket(`ws://localhost:${port}/ws`);
+  const events: any[] = [];
+  await new Promise<void>((resolve, reject) => {
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify({ type: "chat", messages: [{ role: "user", content: "hi" }] }));
+    });
+    ws.addEventListener("message", (e) => {
+      const msg = JSON.parse(e.data.toString());
+      events.push(msg);
+      if (msg.type === "done") resolve();
+    });
+    ws.addEventListener("error", reject);
+  });
+  ws.close();
+  server.close();
+
+  const sourcesEvent = events.find((e) => e.type === "sources");
+  assert.ok(sourcesEvent);
+  assert.deepEqual(sourcesEvent.results, [{ title: "T", url: "https://x.example", snippet: "s" }]);
+});
+
+test("POST /api/web-search returns structured results as JSON", async () => {
+  const server = createServer(
+    async () => ({ selectedCandidateId: "x", reply: "y", toolsUsed: [] }),
+    undefined,
+    async (query: string, maxResults?: number) => ({
+      results: [{ title: `result for ${query}`, url: "https://x.example", snippet: `max ${maxResults ?? "default"}` }],
+    })
+  );
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const res = await fetch(`http://localhost:${port}/api/web-search`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query: "jakarta weather", maxResults: 3 }),
+  });
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(body, {
+    results: [{ title: "result for jakarta weather", url: "https://x.example", snippet: "max 3" }],
+  });
+  server.close();
+});
+
+test("POST /api/web-search with missing query returns 400", async () => {
+  const server = createServer(async () => ({ selectedCandidateId: "x", reply: "y", toolsUsed: [] }));
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const res = await fetch(`http://localhost:${port}/api/web-search`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+
+  assert.equal(res.status, 400);
+  server.close();
+});
+
+test("POST /api/web-search returns 500 with the error message when the search executor throws", async () => {
+  const server = createServer(
+    async () => ({ selectedCandidateId: "x", reply: "y", toolsUsed: [] }),
+    undefined,
+    async () => {
+      throw new Error("searxng unreachable");
+    }
+  );
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const res = await fetch(`http://localhost:${port}/api/web-search`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query: "x" }),
+  });
+  const body = await res.json();
+
+  assert.equal(res.status, 500);
+  assert.equal(body.error, "searxng unreachable");
+  server.close();
+});
+
 test("WS: resume replays buffered events after reconnecting with a new socket", async () => {
   let releaseSecondDelta: () => void = () => {};
   const gate = new Promise<void>((resolve) => {
