@@ -45,7 +45,23 @@ const desktop: DesktopApi = {
   aiStreamCancel: async () => {},
   aiGskStatus: async () => ({ loggedIn: false }),
   aiGskLogin: async () => {},
-  webSearch: async () => ({ results: [], method: "error", error: NOT_AVAILABLE }),
+  webSearch: async (query, maxResults) => {
+    try {
+      const res = await fetch("/api/web-search", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query, maxResults }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        return { results: [], method: "error", error: body.error ?? `HTTP ${res.status}` };
+      }
+      const data = (await res.json()) as { results: Array<{ title: string; url: string; snippet: string }>; answer?: string };
+      return { results: data.results, answer: data.answer, method: "searxng" };
+    } catch (err) {
+      return { results: [], method: "error", error: (err as Error).message };
+    }
+  },
   imageSearch: async () => ({ images: [], method: "error", error: NOT_AVAILABLE }),
   fetchImage: async () => null,
   pickAttachments: async () => null,
