@@ -75,3 +75,120 @@ test("GET / serves the index page", async (t) => {
   assert.match(res.headers.get("content-type") ?? "", /text\/html/);
   assert.ok(body.length > 0);
 });
+
+test("WS: chat turn streams delta events then a done event", async () => {
+  const server = createServer(async (_messages: ChatMessage[], _deps, streamCallbacks) => {
+    streamCallbacks?.onDelta("hel");
+    streamCallbacks?.onDelta("lo");
+    return { selectedCandidateId: "x", reply: "hello", toolsUsed: [] };
+  });
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const ws = new WebSocket(`ws://localhost:${port}`);
+  const events: any[] = [];
+  await new Promise<void>((resolve, reject) => {
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify({ type: "chat", messages: [{ role: "user", content: "hi" }] }));
+    });
+    ws.addEventListener("message", (e) => {
+      const msg = JSON.parse(e.data.toString());
+      events.push(msg);
+      if (msg.type === "done") resolve();
+    });
+    ws.addEventListener("error", reject);
+  });
+  ws.close();
+  server.close();
+
+  const types = events.filter((e) => e.type !== "turn_started").map((e) => e.type);
+  assert.deepEqual(types, ["delta", "delta", "done"]);
+});
+
+test("WS: resume replays buffered events after reconnecting with a new socket", async () => {
+  let releaseSecondDelta: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    releaseSecondDelta = resolve;
+  });
+
+  const server = createServer(async (_messages: ChatMessage[], _deps, streamCallbacks) => {
+    streamCallbacks?.onDelta("first");
+    await gate;
+    streamCallbacks?.onDelta("second");
+    return { selectedCandidateId: "x", reply: "first second", toolsUsed: [] };
+  });
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const ws1 = new WebSocket(`ws://localhost:${port}`);
+  let turnId = "";
+  let lastSeq = -1;
+  await new Promise<void>((resolve) => {
+    ws1.addEventListener("open", () =>
+      ws1.send(JSON.stringify({ type: "chat", messages: [{ role: "user", content: "hi" }] }))
+    );
+    ws1.addEventListener("message", (e) => {
+      const msg = JSON.parse(e.data.toString());
+      if (msg.type === "turn_started") turnId = msg.turnId;
+      if (msg.type === "delta") {
+        lastSeq = msg.seq;
+        resolve();
+      }
+    });
+  });
+  ws1.close();
+  releaseSecondDelta();
+
+  const ws2 = new WebSocket(`ws://localhost:${port}`);
+  const resumedEvents: any[] = [];
+  await new Promise<void>((resolve) => {
+    ws2.addEventListener("open", () => ws2.send(JSON.stringify({ type: "resume", turnId, lastSeq })));
+    ws2.addEventListener("message", (e) => {
+      const msg = JSON.parse(e.data.toString());
+      resumedEvents.push(msg);
+      if (msg.type === "done") resolve();
+    });
+  });
+  ws2.close();
+  server.close();
+
+  assert.deepEqual(resumedEvents.map((e) => e.type), ["delta", "done"]);
+  assert.equal(resumedEvents[0].text, "second");
+});
+
+test("WS: stop aborts an in-flight turn and the done event reports stopped:true", async () => {
+  const server = createServer(async (_messages: ChatMessage[], _deps, streamCallbacks) => {
+    streamCallbacks?.onDelta("partial");
+    await new Promise((_resolve, reject) => {
+      streamCallbacks?.signal?.addEventListener("abort", () => {
+        const err = new Error("aborted");
+        err.name = "AbortError";
+        reject(err);
+      });
+    });
+    return { selectedCandidateId: "x", reply: "unreachable", toolsUsed: [] };
+  });
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const ws = new WebSocket(`ws://localhost:${port}`);
+  const events: any[] = [];
+  let turnId = "";
+  await new Promise<void>((resolve) => {
+    ws.addEventListener("open", () =>
+      ws.send(JSON.stringify({ type: "chat", messages: [{ role: "user", content: "hi" }] }))
+    );
+    ws.addEventListener("message", (e) => {
+      const msg = JSON.parse(e.data.toString());
+      events.push(msg);
+      if (msg.type === "turn_started") turnId = msg.turnId;
+      if (msg.type === "delta") ws.send(JSON.stringify({ type: "stop", turnId }));
+      if (msg.type === "done") resolve();
+    });
+  });
+  ws.close();
+  server.close();
+
+  const done = events.find((e) => e.type === "done");
+  assert.equal(done.stopped, true);
+});
