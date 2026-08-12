@@ -5,11 +5,74 @@ import DOMPurify from "dompurify";
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  sources?: WebSearchResult[];
 }
 
-function Markdown({ text }: { text: string }) {
-  const html = DOMPurify.sanitize(marked.parse(text, { async: false }) as string);
+interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+  publishedDate?: string;
+}
+
+function faviconUrl(pageUrl: string): string {
+  try {
+    return `https://www.google.com/s2/favicons?sz=32&domain=${new URL(pageUrl).hostname}`;
+  } catch {
+    return "";
+  }
+}
+
+function withCitationChips(text: string, sources?: WebSearchResult[]): string {
+  if (!sources || sources.length === 0) return text;
+  return text.replace(/\[(\d+)\]/g, (match, numStr: string) => {
+    const source = sources[Number(numStr) - 1];
+    if (!source) return match;
+    const favicon = faviconUrl(source.url);
+    const img = favicon ? `<img src="${favicon}" alt="" class="cite-fav"/>` : "";
+    return `<sup class="cite" data-cite="${numStr}">${img}</sup>`;
+  });
+}
+
+function Markdown({ text, sources }: { text: string; sources?: WebSearchResult[] }) {
+  const html = DOMPurify.sanitize(marked.parse(withCitationChips(text, sources), { async: false }) as string, {
+    ADD_ATTR: ["data-cite"],
+  });
   return <div dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+function SourceCard({ source, x, y, onClose }: { source: WebSearchResult; x: number; y: number; onClose: () => void }) {
+  let hostname = "";
+  try {
+    hostname = new URL(source.url).hostname;
+  } catch {
+    /* leave hostname blank if the URL doesn't parse */
+  }
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10 }} />
+      <div
+        style={{
+          position: "fixed",
+          left: x,
+          top: y,
+          zIndex: 11,
+          background: "#222",
+          color: "#fff",
+          borderRadius: 8,
+          padding: 12,
+          maxWidth: 280,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+        }}
+      >
+        <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 4 }}>{hostname}</div>
+        <a href={source.url} target="_blank" rel="noopener noreferrer" style={{ color: "#fff", fontWeight: 600, textDecoration: "none" }}>
+          {source.title}
+        </a>
+        {source.publishedDate && <div style={{ fontSize: 11, opacity: 0.6, marginTop: 6 }}>{source.publishedDate}</div>}
+      </div>
+    </>
+  );
 }
 
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -22,12 +85,14 @@ export function ChatApp() {
   const [turnId, setTurnId] = useState<string | null>(null);
   const [awaitingFirstToken, setAwaitingFirstToken] = useState(false);
   const [connectionLost, setConnectionLost] = useState(false);
+  const [popover, setPopover] = useState<{ source: WebSearchResult; x: number; y: number } | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const draftRef = useRef("");
   const turnIdRef = useRef<string | null>(null);
   const lastSeqRef = useRef(-1);
   const reconnectAttemptsRef = useRef(0);
+  const sourcesRef = useRef<WebSearchResult[]>([]);
 
   useEffect(() => {
     turnIdRef.current = turnId;
@@ -66,12 +131,20 @@ export function ChatApp() {
   }
 
   function handleWsMessage(raw: string) {
-    const msg = JSON.parse(raw) as { type: string; seq?: number; turnId?: string; text?: string; error?: string };
+    const msg = JSON.parse(raw) as {
+      type: string;
+      seq?: number;
+      turnId?: string;
+      text?: string;
+      error?: string;
+      results?: WebSearchResult[];
+    };
 
     if (msg.type === "turn_started") {
       setTurnId(msg.turnId ?? null);
       setAwaitingFirstToken(true);
       lastSeqRef.current = -1;
+      sourcesRef.current = [];
       return;
     }
 
@@ -85,10 +158,13 @@ export function ChatApp() {
       setAwaitingFirstToken(false);
     } else if (msg.type === "tool_call_delta" || msg.type === "tool_result") {
       setAwaitingFirstToken(false);
+    } else if (msg.type === "sources") {
+      sourcesRef.current = msg.results ?? [];
     } else if (msg.type === "done") {
       const finalText = draftRef.current;
+      const finalSources = sourcesRef.current;
       draftRef.current = "";
-      setMessages((prev) => [...prev, { role: "assistant", content: finalText }]);
+      setMessages((prev) => [...prev, { role: "assistant", content: finalText, sources: finalSources }]);
       setAssistantDraft("");
       setTurnId(null);
       setAwaitingFirstToken(false);
@@ -128,6 +204,16 @@ export function ChatApp() {
     sendTurn(truncated);
   }
 
+  function handleCitationClick(e: React.MouseEvent, sources?: WebSearchResult[]) {
+    const target = (e.target as HTMLElement).closest("[data-cite]");
+    if (!target || !sources) return;
+    const n = Number(target.getAttribute("data-cite"));
+    const source = sources[n - 1];
+    if (!source) return;
+    const rect = target.getBoundingClientRect();
+    setPopover({ source, x: rect.left, y: rect.bottom + 4 });
+  }
+
   const lastIsAssistant = messages.length > 0 && messages[messages.length - 1].role === "assistant";
 
   return (
@@ -136,9 +222,13 @@ export function ChatApp() {
       {connectionLost && <div style={{ color: "#b00", marginBottom: 8 }}>Connection lost. Reload the page to reconnect.</div>}
       <div style={{ border: "1px solid #ccc", borderRadius: 8, padding: 12, minHeight: 200, marginBottom: 12 }}>
         {messages.map((m, i) => (
-          <div key={i} style={{ marginBottom: 8 }}>
+          <div
+            key={i}
+            style={{ marginBottom: 8 }}
+            onClick={m.role === "assistant" ? (e) => handleCitationClick(e, m.sources) : undefined}
+          >
             <strong>{m.role === "user" ? "You" : "Assistant"}:</strong>
-            {m.role === "assistant" ? <Markdown text={m.content} /> : <div>{m.content}</div>}
+            {m.role === "assistant" ? <Markdown text={m.content} sources={m.sources} /> : <div>{m.content}</div>}
           </div>
         ))}
         {turnId && (
@@ -173,6 +263,7 @@ export function ChatApp() {
           </button>
         )}
       </form>
+      {popover && <SourceCard source={popover.source} x={popover.x} y={popover.y} onClose={() => setPopover(null)} />}
     </div>
   );
 }
