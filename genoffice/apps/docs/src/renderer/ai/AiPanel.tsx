@@ -75,8 +75,6 @@ interface ChatEntry {
   loginRequired?: boolean
   /** tool executions performed during this assistant turn */
   tools?: ToolActivity[]
-  /** web_search sources accumulated during this assistant turn, for inline [N] citation chips */
-  citations?: MarkdownCitation[]
 }
 
 /** clickable starter prompts for the empty state (fill the input, do not send) —
@@ -242,6 +240,10 @@ export function AiPanel({
   /** Wall-clock start of the current run, drives the elapsed badge */
   const runStartedAtRef = useRef(0)
   const [chat, setChat] = useState<ChatEntry[]>([])
+  /** web_search sources accumulated across the whole page session (matches tools.ts's
+   * module-level webSearchCitationOffset, which never resets), so [N] markers always
+   * index into the right citation regardless of which turn/entry they came from */
+  const [citations, setCitations] = useState<MarkdownCitation[]>([])
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [trackChanges, setTrackChanges] = useState(
     () => localStorage.getItem(TRACK_CHANGES_KEY) === '1',
@@ -541,7 +543,7 @@ export function AiPanel({
               snippet: item.snippet,
               publishedDate: item.publishedDate,
             }))
-            patchLastAssistant((last) => ({ citations: [...(last.citations ?? []), ...newCitations] }))
+            setCitations((prev) => [...prev, ...newCitations])
           }
         },
         onTurnEnd: () => {
@@ -883,7 +885,7 @@ export function AiPanel({
             {historicChat.map((entry, i) => (
               <div key={`h${i}`} className={`ai-msg ai-msg-${entry.role} ai-msg-historic`}>
                 {entry.tools && entry.tools.length > 0 && <ToolChipList tools={entry.tools} />}
-                {entry.text && <Markdown text={entry.text} citations={entry.citations} />}
+                {entry.text && <Markdown text={entry.text} citations={citations} />}
               </div>
             ))}
             <div className="ai-history-sep">{t('aiHistorySep')}</div>
@@ -947,7 +949,7 @@ export function AiPanel({
                   />
                 </span>
               ) : entry.role === 'assistant' ? (
-                <Markdown text={entry.text} citations={entry.citations} />
+                <Markdown text={entry.text} citations={citations} />
               ) : (
                 entry.text
               )}
