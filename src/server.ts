@@ -292,12 +292,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(`ai-workspace chat core listening on http://localhost:${port}`);
   });
 
-  const openwebuiAdminToken = process.env.OPENWEBUI_HEALTH_MONITOR_TOKEN;
-  if (openwebuiAdminToken) {
+  const openwebuiAdminEmail = process.env.OPENWEBUI_ADMIN_EMAIL;
+  const openwebuiAdminPassword = process.env.OPENWEBUI_ADMIN_PASSWORD;
+  if (openwebuiAdminEmail && openwebuiAdminPassword) {
     startHealthMonitor({
       madeUrl: process.env.MADE_URL ?? "http://made:8000",
       openwebuiUrl: process.env.OPENWEBUI_URL ?? "http://open-webui:8080",
-      adminToken: openwebuiAdminToken,
+      adminEmail: openwebuiAdminEmail,
+      adminPassword: openwebuiAdminPassword,
     });
   }
 }
