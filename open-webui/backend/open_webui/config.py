@@ -95,7 +95,11 @@ async def import_legacy_config_json():
 STATIC_DIR = Path(os.getenv('STATIC_DIR', OPEN_WEBUI_DIR / 'static')).resolve()
 
 try:
-    if STATIC_DIR.exists():
+    # Guard: only rewrite static from the frontend build when a build exists.
+    # Without this, any host-side import of open_webui (e.g. running the
+    # backend's pytest from a git worktree) deletes the checked-in static
+    # assets with nothing to replace them, leaving git status dirty.
+    if STATIC_DIR.exists() and (FRONTEND_BUILD_DIR / 'static').exists():
         for item in STATIC_DIR.iterdir():
             if item.is_file() or item.is_symlink():
                 try:
