@@ -3,7 +3,7 @@ from typing import Optional
 
 from open_webui.internal.db import Base, get_async_db_context
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Column, Text, BigInteger, delete, func, select, update
+from sqlalchemy import BigInteger, Column, Integer, Text, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -27,6 +27,9 @@ class Policy(Base):
     deployed_at = Column(BigInteger, nullable=True)
     last_error = Column(Text, nullable=True)
     updated_at = Column(BigInteger, nullable=False)
+    # C3-B: id of the latest policy_versions row (no FK constraint — SQLite
+    # ALTER TABLE ADD COLUMN can't add one; see migration c0dec2de0003).
+    current_version_id = Column(Integer, nullable=True)
 
 
 class PolicyModel(BaseModel):
@@ -44,6 +47,7 @@ class PolicyModel(BaseModel):
     deployed_at: Optional[int] = None
     last_error: Optional[str] = None
     updated_at: int
+    current_version_id: Optional[int] = None
 
     @property
     def is_draft(self) -> bool:
