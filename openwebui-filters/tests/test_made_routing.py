@@ -75,10 +75,16 @@ def test_inlet_passes_through_when_model_is_already_a_tier():
 
             assert result["model"] == "deepseek-v4-flash"
             # Already a concrete tier — MADE must never be consulted.
-            # Verify no requests were made to MADE
-            decide_requests = m.requests.get(("POST", "http://made:8000/decide"))
+            # Verify no requests were made to MADE by iterating through actual request keys
+            # aioresponses stores requests as: {(method, URL): [RequestCall, ...]}
+            decide_requests_found = []
+            for key in m.requests.keys():
+                method, url = key
+                if method == "POST" and "made:8000" in str(url) and "/decide" in str(url):
+                    decide_requests_found.append(key)
+
             assert (
-                not decide_requests
+                not decide_requests_found
             ), "MADE's /decide should never be called for an already-concrete tier model"
 
     asyncio.run(run())

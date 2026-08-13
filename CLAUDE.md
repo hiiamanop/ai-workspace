@@ -59,7 +59,19 @@ Open WebUI is reachable at `http://localhost:3001`; `WEBUI_SECRET_KEY` must be s
    `access_grants` field in the create payload: `"access_grants": [{"principal_type": "anyone", "principal_id": "*", "permission": "read"}]`.
    This grant is set once and never revoked — tiers remain publicly dispatchable at all times,
    regardless of MADE's health status. If Open WebUI's UI doesn't expose this field, create tiers
-   via direct `POST /api/v1/models/create` call instead; the brief contains an example.
+   via direct `POST /api/v1/models/create` call instead (token obtained via `POST /api/v1/auths/signin`):
+   ```bash
+   curl -X POST http://localhost:3001/api/v1/models/create \
+     -H "Authorization: Bearer $ADMIN_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "id": "deepseek-v4-flash",
+       "name": "DeepSeek Flash",
+       "meta": {"made_scores": {"brand": "deepseek", "cost_per_1k_tokens": 0.0005, "quality": 0.6, "latency": 10, "business_risk": 0.1, "context_window_tokens": 32000}},
+       "params": {},
+       "access_grants": [{"principal_type": "anyone", "principal_id": "*", "permission": "read"}]
+     }'
+   ```
 5. Create one brand entry per brand (e.g. id `deepseek`) — `base_model_id`
    pointing at any one of that brand's tiers (MADE overrides it on every
    call while healthy). The brand entry's `meta.made_scores` MUST contain
