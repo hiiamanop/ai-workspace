@@ -14,6 +14,7 @@ class Task(BaseModel):
     type: str
     data_classification: Literal["public", "internal", "confidential", "restricted"]
     estimated_context_tokens: int = 0
+    complexity: Literal["low", "medium", "high"] = "medium"
 
 
 class Org(BaseModel):
@@ -52,7 +53,12 @@ def decide(
     candidates: list[DecisionCandidate],
     policies_dir: Path,
 ) -> DecisionResult:
-    manifest_name = "epm-critical.yaml" if task.data_classification in ("confidential", "restricted") else "epm.yaml"
+    if task.data_classification in ("confidential", "restricted"):
+        manifest_name = "epm-critical.yaml"
+    elif task.complexity == "high":
+        manifest_name = "epm-high-complexity.yaml"
+    else:
+        manifest_name = "epm.yaml"
     manifest = load_epm_manifest(policies_dir / manifest_name)
     hard_dir = policies_dir / "hard"
 

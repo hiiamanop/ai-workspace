@@ -114,3 +114,20 @@ def test_decide_excludes_candidate_with_insufficient_context_window(tmp_path, mo
     assert body["selected_candidate_id"] is None
     assert len(body["excluded"]) == 1
     assert "context:" in body["excluded"][0]["reason"]
+
+
+def test_decide_accepts_complexity_field(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    response = client.post("/decide", json={
+        "task": {
+            "type": "chat",
+            "data_classification": "internal",
+            "estimated_context_tokens": 100,
+            "complexity": "high",
+        },
+        "decision_kind": "model_selection",
+        "candidates": [
+            {"id": "a", "vendor": "v", "kind": "model", "cost_per_1k_tokens": 0.001, "scores": {"cost": 1.0, "quality": 0.5, "latency": 0.9, "business_risk": 0.9}},
+        ],
+    })
+    assert response.status_code == 200

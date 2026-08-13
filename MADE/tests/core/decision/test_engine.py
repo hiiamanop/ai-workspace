@@ -100,3 +100,40 @@ def test_critical_task_prefers_quality_over_cost():
 
     assert standard.selected_candidate_id == "cheap-low-quality"
     assert critical.selected_candidate_id == "pricey-high-quality"
+
+
+def test_high_complexity_prefers_quality_over_cost():
+    candidates = [
+        DecisionCandidate(id="cheap", vendor="v", kind="model", cost_per_1k_tokens=0.001, scores={"cost": 0.1, "quality": 0.3, "latency": 0.1, "business_risk": 0.1}),
+        DecisionCandidate(id="premium", vendor="v", kind="model", cost_per_1k_tokens=0.02, scores={"cost": 0.9, "quality": 0.95, "latency": 0.9, "business_risk": 0.9}),
+    ]
+    org = Org(budget_remaining_usd=1000.0, region="us")
+
+    low_result = decide(
+        task=Task(type="chat", data_classification="internal", complexity="low"),
+        org=org, candidates=candidates, policies_dir=POLICIES_DIR,
+    )
+    high_result = decide(
+        task=Task(type="chat", data_classification="internal", complexity="high"),
+        org=org, candidates=candidates, policies_dir=POLICIES_DIR,
+    )
+
+    assert low_result.selected_candidate_id == "cheap"
+    assert high_result.selected_candidate_id == "premium"
+
+
+def test_confidential_classification_still_wins_over_low_complexity():
+    """data_classification's epm-critical.yaml selection takes priority over complexity — confirms the plan's documented precedence (classification dominates, complexity only matters when classification doesn't already force epm-critical.yaml)."""
+    candidates = [
+        DecisionCandidate(id="cheap", vendor="v", kind="model", cost_per_1k_tokens=0.001, scores={"cost": 0.1, "quality": 0.3, "latency": 0.1, "business_risk": 0.1}),
+        DecisionCandidate(id="premium", vendor="v", kind="model", cost_per_1k_tokens=0.02, scores={"cost": 0.9, "quality": 0.95, "latency": 0.9, "business_risk": 0.9}),
+    ]
+    org = Org(budget_remaining_usd=1000.0, region="us")
+
+    result = decide(
+        task=Task(type="chat", data_classification="confidential", complexity="low"),
+        org=org, candidates=candidates, policies_dir=POLICIES_DIR,
+    )
+
+    assert result.selected_candidate_id == "premium"
+    assert result.technique_used == "topsis"

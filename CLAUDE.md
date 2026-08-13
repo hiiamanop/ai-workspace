@@ -38,6 +38,64 @@ Or the whole stack via Docker: `cp .env.example .env` (`env_file: .env` is not o
 
 Open WebUI is reachable at `http://localhost:3001`; `WEBUI_SECRET_KEY` must be set in `.env` or the container refuses to start (see `.env.example`). The first account created via sign-up becomes admin. LLM providers (e.g. DeepSeek) are configured entirely inside Open WebUI's Admin Settings post-login, not via `.env`—this project deliberately keeps zero LLM provider secrets in scope.
 
+**MADE-routing setup (one-time, manual, after `open-webui` is up):**
+1. Create an automation admin account by signing up a second time with a
+   dedicated email (or reuse your first admin account) — put its
+   credentials in `.env` as `OPENWEBUI_ADMIN_EMAIL`/`OPENWEBUI_ADMIN_PASSWORD`.
+2. Ensure `MADE_URL` and `CLASSIFIER_MODEL` are set in `.env` (see `.env.example`).
+   The provisioning script uses these to configure the Filter's valves.
+3. Run `node --import tsx src/openwebui-provision.ts` to install the
+   MADE-routing Filter (`openwebui-filters/made_routing.py`) into Open
+   WebUI. The script automatically:
+   - Creates a long-lived API key for the Filter to use (avoids JWT expiry issues)
+   - Creates or updates the Filter function with its content
+   - Provisions the Filter's configuration (MADE_URL, Open WebUI URL, token, classifier model)
+   Re-run this any time the Filter's source changes, or after a fresh volume/deploy.
+4. In Open WebUI's Admin Settings → Models, create the tier models for
+   each brand (e.g. `deepseek-v4-flash`, `deepseek-v4-pro`), each with a
+   `meta.made_scores` object containing cost and performance metrics.
+   **IMPORTANT:** Every tier MUST include `cost_per_1k_tokens` (numeric, lower=better).
+   **Critical:** When creating each tier model, grant access to every logged-in Open WebUI user via the
+   `access_grants` field in the create payload: `"access_grants": [{"principal_type": "user", "principal_id": "*", "permission": "read"}]`.
+   This grant is set once and never revoked — tiers remain dispatchable at all times,
+   regardless of MADE's health status. If Open WebUI's UI doesn't expose this field, create tiers
+   via direct `POST /api/v1/models/create` call instead (token obtained via `POST /api/v1/auths/signin`):
+   ```bash
+   curl -X POST http://localhost:3001/api/v1/models/create \
+     -H "Authorization: Bearer $ADMIN_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "id": "deepseek-v4-flash",
+       "name": "DeepSeek Flash",
+       "base_model_id": "deepseek-v3",
+       "meta": {"made_scores": {"brand": "deepseek", "cost_per_1k_tokens": 0.0005, "quality": 0.6, "latency": 10, "business_risk": 0.1, "context_window_tokens": 32000}},
+       "params": {},
+       "access_grants": [{"principal_type": "user", "principal_id": "*", "permission": "read"}]
+     }'
+   ```
+   **IMPORTANT:** `base_model_id` MUST be set to an actual model id as it appears in Open WebUI's
+   Admin Settings → Connections (e.g., the real DeepSeek model identifier configured in that connection).
+   Without it, the tier will be created but excluded from model listings and dispatching. Look up your
+   actual provider model ids in Admin Settings before creating tiers.
+5. Create one brand entry per brand (e.g. id `deepseek`) — `base_model_id`
+   pointing at any one of that brand's tiers (MADE overrides it on every
+   call while healthy). The brand entry's `meta.made_scores` MUST contain
+   ONLY `{ "brand": "deepseek" }` with NO `cost_per_1k_tokens`.
+   This discriminator is how the Filter and health monitor recognize the
+   brand entry from tier entries.
+6. The health monitor runs automatically if `OPENWEBUI_ADMIN_EMAIL` and
+   `OPENWEBUI_ADMIN_PASSWORD` are set in `.env` (same account from step 1).
+   It signs in fresh on each check, avoiding token expiry issues.
+   The monitor checks MADE's health and toggles only the brand entry's visibility:
+   - MADE healthy: brand entry active (users select the brand, filter routes to tiers via MADE)
+   - MADE unhealthy: brand entry inactive (tiers are directly selectable as fallback, always public)
+
+**Score polarity (for MADE's TOPSIS):**
+  - `cost_per_1k_tokens`: raw USD amount, lower is better (e.g., 0.0005, 0.003)
+  - `quality`: 0-1 scale, higher is better (e.g., 0.6, 0.9)
+  - `latency`: raw milliseconds (or seconds), lower is better (e.g., 10, 100)
+  - `business_risk`: 0-1 scale, lower is better (0=no risk)
+
 GenOffice (`genoffice/`) is its own npm workspace root, vendored separately — `cd genoffice && npm install` before touching anything under it. Its own commands: `npm run typecheck` / `npm run test -- --run` (vitest) scoped per-app, e.g. `cd genoffice/apps/docs && npm run typecheck`.
 
 ## Architecture

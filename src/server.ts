@@ -9,6 +9,7 @@ import { handleAgentTurn } from "./agent-turn.ts";
 import type { AgentTurnRequest } from "./agent-turn.ts";
 import type { ChatMessage } from "./types.ts";
 import { callWebSearch, type WebSearchResponse } from "./mcp/searxng-client.ts";
+import { startHealthMonitor } from "./openwebui-health-monitor.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST_DIR = path.join(__dirname, "..", "client", "dist");
@@ -290,4 +291,15 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   createServer().listen(port, () => {
     console.log(`ai-workspace chat core listening on http://localhost:${port}`);
   });
+
+  const openwebuiAdminEmail = process.env.OPENWEBUI_ADMIN_EMAIL;
+  const openwebuiAdminPassword = process.env.OPENWEBUI_ADMIN_PASSWORD;
+  if (openwebuiAdminEmail && openwebuiAdminPassword) {
+    startHealthMonitor({
+      madeUrl: process.env.MADE_URL ?? "http://made:8000",
+      openwebuiUrl: process.env.OPENWEBUI_URL ?? "http://open-webui:8080",
+      adminEmail: openwebuiAdminEmail,
+      adminPassword: openwebuiAdminPassword,
+    });
+  }
 }
