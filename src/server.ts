@@ -9,6 +9,7 @@ import { handleAgentTurn } from "./agent-turn.ts";
 import type { AgentTurnRequest } from "./agent-turn.ts";
 import type { ChatMessage } from "./types.ts";
 import { callWebSearch, type WebSearchResponse } from "./mcp/searxng-client.ts";
+import { callScrape } from "./mcp/scrapling-client.ts";
 import { startHealthMonitor } from "./openwebui-health-monitor.ts";
 import { compilePolicy, CompileError } from "./openwebui-policy-compiler.ts";
 
@@ -167,7 +168,8 @@ function attachWebSocketServer(
 export function createServer(
   handleChatFn: typeof handleChat = handleChat,
   handleAgentTurnFn: typeof handleAgentTurn = handleAgentTurn,
-  webSearchExecutorFn: (query: string, maxResults?: number) => Promise<WebSearchResponse> = callWebSearch
+  webSearchExecutorFn: (query: string, maxResults?: number) => Promise<WebSearchResponse> = callWebSearch,
+  scrapeExecutorFn: (url: string) => Promise<string> = callScrape
 ): http.Server {
   const server = http.createServer(async (req, res) => {
     try {
@@ -258,6 +260,37 @@ export function createServer(
           const result = await webSearchExecutorFn(body.query, maxResults);
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify(result));
+        } catch (err) {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: (err as Error).message }));
+        }
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/api/scrape") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const raw = Buffer.concat(chunks).toString("utf8");
+
+        let body: { url?: unknown };
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid JSON body" }));
+          return;
+        }
+
+        if (typeof body.url !== "string" || body.url.trim() === "") {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "url field is required" }));
+          return;
+        }
+
+        try {
+          const content = await scrapeExecutorFn(body.url);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ content }));
         } catch (err) {
           res.writeHead(500, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: (err as Error).message }));

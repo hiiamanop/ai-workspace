@@ -198,6 +198,67 @@ test("POST /api/web-search returns 500 with the error message when the search ex
   server.close();
 });
 
+test("POST /api/scrape returns scraped content as JSON", async () => {
+  const server = createServer(
+    async () => ({ selectedCandidateId: "x", reply: "y", toolsUsed: [] }),
+    undefined,
+    undefined,
+    async (url: string) => `# ${url}\n\ncontent of ${url}`
+  );
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const res = await fetch(`http://localhost:${port}/api/scrape`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url: "https://example.com/page" }),
+  });
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(body, { content: "# https://example.com/page\n\ncontent of https://example.com/page" });
+  server.close();
+});
+
+test("POST /api/scrape with missing url returns 400", async () => {
+  const server = createServer(async () => ({ selectedCandidateId: "x", reply: "y", toolsUsed: [] }));
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const res = await fetch(`http://localhost:${port}/api/scrape`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+
+  assert.equal(res.status, 400);
+  server.close();
+});
+
+test("POST /api/scrape returns 500 with the error message when the scrape executor throws", async () => {
+  const server = createServer(
+    async () => ({ selectedCandidateId: "x", reply: "y", toolsUsed: [] }),
+    undefined,
+    undefined,
+    async () => {
+      throw new Error("scrape refused: URL targets an internal/private host");
+    }
+  );
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const res = await fetch(`http://localhost:${port}/api/scrape`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url: "http://localhost/x" }),
+  });
+  const body = await res.json();
+
+  assert.equal(res.status, 500);
+  assert.equal(body.error, "scrape refused: URL targets an internal/private host");
+  server.close();
+});
+
 test("WS: resume replays buffered events after reconnecting with a new socket", async () => {
   let releaseSecondDelta: () => void = () => {};
   const gate = new Promise<void>((resolve) => {
