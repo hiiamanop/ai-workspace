@@ -52,6 +52,11 @@ class DecideResponse(BaseModel):
     policy_version: str
 
 
+class PolicyDeployRequest(BaseModel):
+    policy_id: str
+    rego_content: str
+
+
 class ExperimentRunRequest(BaseModel):
     scenario_dataset_version: str = "v1"
 

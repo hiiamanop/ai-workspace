@@ -1,5 +1,8 @@
+import json
 import os
+import re
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -12,6 +15,7 @@ from api.schemas import (
     ExcludedOut,
     ExperimentRunRequest,
     ExperimentRunResponse,
+    PolicyDeployRequest,
     RankingEntryOut,
 )
 from core.decision.engine import DecisionCandidate, Org, Task, decide
@@ -105,6 +109,54 @@ def post_decide(request: DecideRequest) -> DecideResponse:
         session.commit()
 
     return response
+
+
+# Policy ids become .rego filenames under policies/hard/: keep them
+# URL-safe and traversal-proof; *_test ids would be misread as test files.
+POLICY_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
+
+@app.post("/api/policies/deploy")
+def deploy_policy(request: PolicyDeployRequest) -> dict:
+    """Validate a Rego policy against OPA and atomically install it.
+
+    The new file is picked up by the next /decide call (policies are read
+    from disk per evaluation), so a deployed policy is live immediately.
+    """
+    if not POLICY_ID_RE.match(request.policy_id) or request.policy_id.endswith("_test"):
+        raise HTTPException(status_code=400, detail=f"invalid policy_id '{request.policy_id}'")
+
+    # Validate syntax with OPA before touching the policies directory
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, f"{request.policy_id}.rego").write_text(request.rego_content)
+        try:
+            proc = subprocess.run(
+                ["opa", "check", "--format", "json", tmp],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            raise HTTPException(status_code=503, detail=f"policy engine unavailable: {exc}") from exc
+
+        if proc.returncode != 0:
+            try:
+                errors = json.loads(proc.stdout).get("errors", [])
+                msg = "; ".join(
+                    f"{e.get('file')}:{e.get('location', {}).get('row')}: {e.get('message')}" for e in errors
+                )
+            except Exception:
+                msg = proc.stderr.strip() or proc.stdout.strip()
+            raise HTTPException(status_code=400, detail=f"rego invalid: {msg}")
+
+    hard_dir = POLICIES_ROOT / "hard"
+    hard_dir.mkdir(parents=True, exist_ok=True)
+    target = hard_dir / f"{request.policy_id}.rego"
+    tmp_target = target.with_suffix(".rego.tmp")
+    tmp_target.write_text(request.rego_content)
+    os.replace(tmp_target, target)
+
+    return {"policy_id": request.policy_id, "status": "deployed"}
 
 
 @app.get("/policies/{policy_set}")
