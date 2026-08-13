@@ -103,6 +103,8 @@ def test_non_admin_gets_403_on_all_endpoints(non_admin_client):
         ("post", "/budget-policy-001/compile"),
         ("post", "/budget-policy-001/deploy"),
         ("post", "/budget-policy-001/rollback"),
+        ("get", "/budget-policy-001/audit"),
+        ("get", "/budget-policy-001/versions"),
     ]:
         kwargs = {"json": POLICY} if method in ("post", "put") else {}
         response = getattr(non_admin_client, method)(f"/api/v1/policies{path}", **kwargs)
@@ -432,6 +434,180 @@ def test_deploy_made_unreachable_502_no_rollback(admin_client, patch_httpx):
     assert response.status_code == 502
     stored = admin_client.get("/api/v1/policies/budget-policy-001").json()
     assert stored["status"] == "draft"
+
+
+############################
+# Audit logging (C3-A)
+############################
+
+
+def audit_entries(client, policy_id="budget-policy-001"):
+    return client.get(f"/api/v1/policies/{policy_id}/audit").json()["entries"]
+
+
+def test_audit_log_on_create(admin_client):
+    admin_client.post("/api/v1/policies", json=POLICY)
+    entries = audit_entries(admin_client)
+    assert len(entries) == 1
+    e = entries[0]
+    assert e["action"] == "create"
+    assert e["user_id"] == "admin-1"
+    assert e["before"] is None
+    assert "markdown_content" in e["after"]
+    assert e["compile_success"] is None
+
+
+def test_audit_log_on_update(admin_client):
+    admin_client.post("/api/v1/policies", json=POLICY)
+    admin_client.put("/api/v1/policies/budget-policy-001", json={"markdown_content": "New text."})
+    e = audit_entries(admin_client)[0]
+    assert e["action"] == "update"
+    assert e["before"]["markdown_content"] == POLICY["markdown_content"]
+    assert e["after"]["markdown_content"] == "New text."
+
+
+def test_audit_log_on_compile_success(admin_client, patch_httpx):
+    admin_client.post("/api/v1/policies", json=POLICY)
+    patch_httpx([FakeResponse(200, {"rego": VALID_REGO, "warnings": []})])
+    admin_client.post("/api/v1/policies/budget-policy-001/compile")
+    e = audit_entries(admin_client)[0]
+    assert e["action"] == "compile"
+    assert e["compile_success"] is True
+    assert e["compile_error"] is None
+    assert e["after"]["compiled_rego"] == VALID_REGO
+
+
+def test_audit_log_on_compile_error(admin_client, patch_httpx):
+    admin_client.post("/api/v1/policies", json=POLICY)
+    patch_httpx([FakeResponse(400, {"error": "Markdown is too vague for compilation"})])
+    admin_client.post("/api/v1/policies/budget-policy-001/compile")
+    e = audit_entries(admin_client)[0]
+    assert e["action"] == "compile"
+    assert e["compile_success"] is False
+    assert "too vague" in e["compile_error"]
+
+
+def test_audit_log_on_deploy(admin_client, patch_httpx):
+    admin_client.post("/api/v1/policies", json=POLICY)
+    patch_httpx([FakeResponse(200, {"rego": VALID_REGO})])
+    admin_client.post("/api/v1/policies/budget-policy-001/compile")
+    patch_httpx([FakeResponse(200, {"policy_id": "budget-policy-001", "status": "deployed"})])
+    admin_client.post("/api/v1/policies/budget-policy-001/deploy")
+    e = audit_entries(admin_client)[0]
+    assert e["action"] == "deploy"
+    assert e["made_response"]["outcome"] == "ok"
+    assert e["after"]["status"] == "active"
+
+
+def test_audit_log_on_rollback(admin_client, patch_httpx):
+    admin_client.post("/api/v1/policies", json=POLICY)
+    patch_httpx([FakeResponse(200, {"rego": VALID_REGO})])
+    admin_client.post("/api/v1/policies/budget-policy-001/compile")
+    patch_httpx([FakeResponse(200, {"policy_id": "budget-policy-001", "status": "deployed"})])
+    admin_client.post("/api/v1/policies/budget-policy-001/deploy")
+    admin_client.post("/api/v1/policies/budget-policy-001/rollback")
+    e = audit_entries(admin_client)[0]
+    assert e["action"] == "rollback"
+    assert e["after"]["status"] == "draft"
+
+
+def test_audit_log_on_delete(admin_client):
+    admin_client.post("/api/v1/policies", json=POLICY)
+    admin_client.delete("/api/v1/policies/budget-policy-001")
+    # trail survives the policy row (audit has no FK to it): create + delete
+    entries = audit_entries(admin_client)
+    assert [e["action"] for e in entries] == ["delete", "create"]
+    assert entries[0]["after"] is None
+    assert entries[0]["before"]["id"] == "budget-policy-001"
+
+
+def test_audit_filter_by_action(admin_client):
+    admin_client.post("/api/v1/policies", json=POLICY)
+    admin_client.put("/api/v1/policies/budget-policy-001", json={"markdown_content": "x"})
+
+    resp = admin_client.get("/api/v1/policies/budget-policy-001/audit", params={"action": "update"})
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 1
+    assert resp.json()["entries"][0]["action"] == "update"
+
+    resp = admin_client.get("/api/v1/policies/budget-policy-001/audit", params={"action": "deploy"})
+    assert resp.json()["total"] == 0
+
+    resp = admin_client.get("/api/v1/policies/budget-policy-001/audit", params={"action": "bogus"})
+    assert resp.status_code == 400
+
+
+def test_audit_unknown_policy_empty(admin_client):
+    # no policy-exists check: deleted policies keep their trail readable
+    resp = admin_client.get("/api/v1/policies/nope/audit")
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
+
+
+############################
+# Versioning (C3-B)
+############################
+
+
+def versions_list(client, policy_id="budget-policy-001"):
+    return client.get(f"/api/v1/policies/{policy_id}/versions").json()
+
+
+def test_version_created_on_first_deploy(admin_client, patch_httpx):
+    admin_client.post("/api/v1/policies", json=POLICY)
+    patch_httpx([FakeResponse(200, {"rego": VALID_REGO})])
+    admin_client.post("/api/v1/policies/budget-policy-001/compile")
+    patch_httpx([FakeResponse(200, {"policy_id": "budget-policy-001", "status": "deployed"})])
+    admin_client.post("/api/v1/policies/budget-policy-001/deploy")
+
+    body = versions_list(admin_client)
+    assert body["total"] == 1
+    v1 = body["versions"][0]
+    assert v1["version_number"] == 1
+    assert v1["rego_content"] == VALID_REGO
+    assert v1["deployed_by"] == "admin-1"
+    # policy points at its latest version
+    stored = admin_client.get("/api/v1/policies/budget-policy-001").json()
+    assert stored["current_version_id"] == v1["id"]
+
+
+def test_version_number_increments(admin_client, patch_httpx):
+    _deploy_flow_to_active(admin_client, patch_httpx)  # deploy v1, rollback → draft
+    admin_client.put("/api/v1/policies/budget-policy-001", json={"markdown_content": "tighter"})
+    V2 = VALID_REGO + "\ndeny[msg] { input.candidate.cost_per_1k_tokens > 0.01 }\n"
+    patch_httpx([FakeResponse(200, {"rego": V2})])
+    admin_client.post("/api/v1/policies/budget-policy-001/compile")
+    patch_httpx([FakeResponse(200, {"policy_id": "budget-policy-001", "status": "deployed"})])
+    admin_client.post("/api/v1/policies/budget-policy-001/deploy")
+
+    body = versions_list(admin_client)
+    assert [v["version_number"] for v in body["versions"]] == [2, 1]
+    assert body["versions"][0]["rego_content"] == V2
+    assert body["versions"][1]["rego_content"] == VALID_REGO
+    stored = admin_client.get("/api/v1/policies/budget-policy-001").json()
+    assert stored["current_version_id"] == body["versions"][0]["id"]
+
+
+def test_no_version_on_failed_deploy(admin_client, patch_httpx):
+    admin_client.post("/api/v1/policies", json=POLICY)
+    patch_httpx([FakeResponse(200, {"rego": VALID_REGO})])
+    admin_client.post("/api/v1/policies/budget-policy-001/compile")
+    patch_httpx([FakeResponse(400, {"detail": "rego invalid: line 3"})])
+    admin_client.post("/api/v1/policies/budget-policy-001/deploy")
+
+    assert versions_list(admin_client)["total"] == 0
+    stored = admin_client.get("/api/v1/policies/budget-policy-001").json()
+    assert stored["current_version_id"] is None
+
+
+def test_rollback_creates_no_version(admin_client, patch_httpx):
+    _deploy_flow_to_active(admin_client, patch_httpx)
+    # only the deploy is versioned, not the rollback (FR-C1)
+    assert versions_list(admin_client)["total"] == 1
+
+
+def test_versions_404(admin_client):
+    assert admin_client.get("/api/v1/policies/nope/versions").status_code == 404
 
 
 ############################

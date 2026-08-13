@@ -29,9 +29,12 @@ def _create_policy_table():
     async def go():
         engine = create_async_engine(TEST_DB_URL)
         from open_webui.models.policies import Policy
+        from open_webui.models.policy_audit_log import PolicyAuditLog
+        from open_webui.models.policy_versions import PolicyVersion
 
         async with engine.begin() as conn:
-            await conn.run_sync(Policy.__table__.create, checkfirst=True)
+            for table in (PolicyAuditLog, PolicyVersion, Policy):
+                await conn.run_sync(table.__table__.create, checkfirst=True)
         await engine.dispose()
 
     asyncio.run(go())
@@ -42,9 +45,12 @@ def _clean_policies_before_test():
     async def clear():
         engine = create_async_engine(TEST_DB_URL)
         from open_webui.models.policies import Policy
+        from open_webui.models.policy_audit_log import PolicyAuditLog
+        from open_webui.models.policy_versions import PolicyVersion
 
         async with engine.begin() as conn:
-            await conn.run_sync(lambda sync_conn: sync_conn.execute(Policy.__table__.delete()))
+            for table in (PolicyAuditLog, PolicyVersion, Policy):
+                await conn.run_sync(lambda sync_conn, t=table: sync_conn.execute(t.__table__.delete()))
         await engine.dispose()
 
     asyncio.run(clear())

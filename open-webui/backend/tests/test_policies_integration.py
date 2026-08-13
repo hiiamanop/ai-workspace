@@ -164,3 +164,129 @@ def test_concurrent_deploys_exactly_one_wins():
     stored = client.get("/api/v1/policies/budget-policy-001").json()
     assert stored["status"] == "active"
     assert stored["active_rego"] == REGO_V1
+    # exactly one version row: version creation follows the winner's MADE call
+    assert client.get("/api/v1/policies/budget-policy-001/versions").json()["total"] == 1
+
+
+def test_full_lifecycle_audit_trail():
+    """C3-A: create → update → compile → deploy all leave audit entries."""
+    client = make_client()
+    client.post("/api/v1/policies", json=POLICY)
+    client.put("/api/v1/policies/budget-policy-001", json={"markdown_content": "revised"})
+    with patch_httpx([FakeResponse(200, {**COMPILE_OK, "rego": REGO_V1})]):
+        client.post("/api/v1/policies/budget-policy-001/compile")
+    with patch_httpx([FakeResponse(200, DEPLOY_OK)]):
+        client.post("/api/v1/policies/budget-policy-001/deploy")
+
+    entries = client.get("/api/v1/policies/budget-policy-001/audit").json()["entries"]
+    assert [e["action"] for e in entries] == ["deploy", "compile", "update", "create"]  # newest first
+
+    deploy_entry = next(e for e in entries if e["action"] == "deploy")
+    assert deploy_entry["made_response"]["outcome"] == "ok"
+    compile_entry = next(e for e in entries if e["action"] == "compile")
+    assert compile_entry["compile_success"] is True
+    update_entry = next(e for e in entries if e["action"] == "update")
+    assert update_entry["before"]["markdown_content"] == POLICY["markdown_content"]
+    assert "revised" in update_entry["after"]["markdown_content"]
+    assert all(e["user_id"] == "admin-1" for e in entries)
+
+
+def test_versions_only_on_success():
+    """C3-B: a deploy MADE rejects must not create a version row."""
+    client = make_client()
+    client.post("/api/v1/policies", json=POLICY)
+    with patch_httpx([FakeResponse(200, {**COMPILE_OK, "rego": REGO_V1})]):
+        client.post("/api/v1/policies/budget-policy-001/compile")
+    with patch_httpx([FakeResponse(200, DEPLOY_OK)]):
+        assert client.post("/api/v1/policies/budget-policy-001/deploy").status_code == 200
+    assert client.post("/api/v1/policies/budget-policy-001/rollback").status_code == 200
+
+    client.put("/api/v1/policies/budget-policy-001", json={"markdown_content": "tighter"})
+    with patch_httpx([FakeResponse(200, {**COMPILE_OK, "rego": REGO_V2})]):
+        client.post("/api/v1/policies/budget-policy-001/compile")
+
+    fake = FakeAsyncClient([FakeResponse(400, MADE_REJECT), FakeResponse(200, DEPLOY_OK)])
+    with patch.object(policies_router.httpx, "AsyncClient", lambda **kw: fake):
+        assert client.post("/api/v1/policies/budget-policy-001/deploy").status_code == 400
+
+    body = client.get("/api/v1/policies/budget-policy-001/versions").json()
+    assert body["total"] == 1  # v2 rejected → still only v1
+    assert body["versions"][0]["version_number"] == 1
+    stored = client.get("/api/v1/policies/budget-policy-001").json()
+    assert stored["current_version_id"] == body["versions"][0]["id"]
+
+
+def test_deploy_deploy_rollback_workflow():
+    """C3-C: deploy v1 → deploy v2 → rollback restores v1; no version row on rollback."""
+    client = make_client()
+    client.post("/api/v1/policies", json=POLICY)
+    with patch_httpx([FakeResponse(200, {**COMPILE_OK, "rego": REGO_V1})]):
+        client.post("/api/v1/policies/budget-policy-001/compile")
+    with patch_httpx([FakeResponse(200, DEPLOY_OK)]):
+        assert client.post("/api/v1/policies/budget-policy-001/deploy").status_code == 200
+
+    # take offline for editing (first-version rollback: no previous_rego)
+    assert client.post("/api/v1/policies/budget-policy-001/rollback").status_code == 200
+    client.put("/api/v1/policies/budget-policy-001", json={"markdown_content": "tighter"})
+    with patch_httpx([FakeResponse(200, {**COMPILE_OK, "rego": REGO_V2})]):
+        client.post("/api/v1/policies/budget-policy-001/compile")
+    with patch_httpx([FakeResponse(200, DEPLOY_OK)]):
+        assert client.post("/api/v1/policies/budget-policy-001/deploy").status_code == 200
+
+    body = client.get("/api/v1/policies/budget-policy-001/versions").json()
+    assert [v["version_number"] for v in body["versions"]] == [2, 1]
+
+    fake = FakeAsyncClient([FakeResponse(200, DEPLOY_OK)])
+    with patch.object(policies_router.httpx, "AsyncClient", lambda **kw: fake):
+        resp = client.post("/api/v1/policies/budget-policy-001/rollback")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "draft"
+    # rollback re-deployed v1 to MADE
+    assert [j for _, j in fake.calls if j["rego_content"] == REGO_V1]
+
+    stored = client.get("/api/v1/policies/budget-policy-001").json()
+    assert stored["status"] == "draft"
+    assert stored["active_rego"] == REGO_V1
+    assert stored["previous_rego"] is None
+
+    # rollback is not a deployment: still 2 versions
+    assert client.get("/api/v1/policies/budget-policy-001/versions").json()["total"] == 2
+
+    # audit trail counts: 2 deploys, 2 rollbacks, 2 compiles, 1 create
+    entries = client.get("/api/v1/policies/budget-policy-001/audit").json()["entries"]
+    actions = [e["action"] for e in entries]
+    assert actions.count("deploy") == 2
+    assert actions.count("rollback") == 2
+    assert actions.count("compile") == 2
+    assert actions.count("create") == 1
+
+
+def test_deploy_made_503_unreachable_no_rollback():
+    """C3-D FR-D1: MADE 503 response → our 502, no rollback attempted, policy untouched."""
+    client = make_client()
+    client.post("/api/v1/policies", json=POLICY)
+    with patch_httpx([FakeResponse(200, {**COMPILE_OK, "rego": REGO_V1})]):
+        client.post("/api/v1/policies/budget-policy-001/compile")
+    with patch_httpx([FakeResponse(200, DEPLOY_OK)]):
+        client.post("/api/v1/policies/budget-policy-001/deploy")
+    # draft again, ready for a second deploy (its backup step re-sets
+    # previous_rego from the still-live active_rego)
+    assert client.post("/api/v1/policies/budget-policy-001/rollback").status_code == 200
+    client.put("/api/v1/policies/budget-policy-001", json={"markdown_content": "tighter"})
+    with patch_httpx([FakeResponse(200, {**COMPILE_OK, "rego": REGO_V2})]):
+        client.post("/api/v1/policies/budget-policy-001/compile")
+
+    fake = FakeAsyncClient([FakeResponse(503, {"detail": "service unavailable"})])
+    with patch.object(policies_router.httpx, "AsyncClient", lambda **kw: fake):
+        response = client.post("/api/v1/policies/budget-policy-001/deploy")
+
+    assert response.status_code == 502
+
+    stored = client.get("/api/v1/policies/budget-policy-001").json()
+    assert stored["status"] == "draft"  # no rollback, no status flip
+    assert stored["active_rego"] == REGO_V1  # unchanged
+    assert "unreachable" in stored["last_error"].lower()
+    assert len(fake.calls) == 1  # exactly one MADE attempt, no rollback call
+
+    # and no version row was created for the failed deploy
+    assert client.get("/api/v1/policies/budget-policy-001/versions").json()["total"] == 1
