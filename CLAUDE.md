@@ -55,16 +55,23 @@ Open WebUI is reachable at `http://localhost:3001`; `WEBUI_SECRET_KEY` must be s
    each brand (e.g. `deepseek-v4-flash`, `deepseek-v4-pro`), each with a
    `meta.made_scores` object containing cost and performance metrics.
    **IMPORTANT:** Every tier MUST include `cost_per_1k_tokens` (numeric, lower=better).
+   **Critical:** When creating each tier model, grant public read access via the
+   `access_grants` field in the create payload: `"access_grants": [{"principal_type": "anyone", "principal_id": "*", "permission": "read"}]`.
+   This grant is set once and never revoked — tiers remain publicly dispatchable at all times,
+   regardless of MADE's health status. If Open WebUI's UI doesn't expose this field, create tiers
+   via direct `POST /api/v1/models/create` call instead; the brief contains an example.
 5. Create one brand entry per brand (e.g. id `deepseek`) — `base_model_id`
    pointing at any one of that brand's tiers (MADE overrides it on every
    call while healthy). The brand entry's `meta.made_scores` MUST contain
    ONLY `{ "brand": "deepseek" }` with NO `cost_per_1k_tokens`.
    This discriminator is how the Filter and health monitor recognize the
    brand entry from tier entries.
-6. To enable the health monitor: set `OPENWEBUI_ADMIN_EMAIL` and
-   `OPENWEBUI_ADMIN_PASSWORD` in `.env` (same account from step 1).
-   The health monitor signs in fresh on each check, avoiding token expiry
-   issues. Enable it by setting `HEALTH_MONITOR_ENABLED=true` and restarting.
+6. The health monitor runs automatically if `OPENWEBUI_ADMIN_EMAIL` and
+   `OPENWEBUI_ADMIN_PASSWORD` are set in `.env` (same account from step 1).
+   It signs in fresh on each check, avoiding token expiry issues.
+   The monitor checks MADE's health and toggles only the brand entry's visibility:
+   - MADE healthy: brand entry active (users select the brand, filter routes to tiers via MADE)
+   - MADE unhealthy: brand entry inactive (tiers are directly selectable as fallback, always public)
 
 **Score polarity (for MADE's TOPSIS):**
   - `cost_per_1k_tokens`: raw USD amount, lower is better (e.g., 0.0005, 0.003)
