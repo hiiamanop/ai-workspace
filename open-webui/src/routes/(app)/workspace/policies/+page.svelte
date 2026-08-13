@@ -23,7 +23,7 @@
 	const load = async () => {
 		loading = true;
 		try {
-			const res = await fetchPolicies(localStorage.token);
+			const res = await fetchPolicies(localStorage.token, 1000);
 			policies.set(res.policies);
 			error = null;
 			offline = false;
@@ -219,4 +219,5 @@
 	confirmLabel={deleting ? 'Deleting…' : 'Delete'}
 	show={confirmDeleteId !== null}
 	onConfirm={doDelete}
+	on:cancel={() => (confirmDeleteId = null)}
 />

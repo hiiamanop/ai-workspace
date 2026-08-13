@@ -20,3 +20,20 @@ export const deployError = writable<string | null>(null);
 
 export const rollbackStatus = writable<AsyncStatus>('idle');
 export const rollbackError = writable<string | null>(null);
+
+/**
+ * Reset all transient per-policy status/error stores to idle. The stores are
+ * module-level, so stale state from a previously viewed policy (✓ Compiled,
+ * stuck 'working', old errors) would otherwise leak into the next one.
+ * Called at the top of the editor's onMount.
+ */
+export const resetPolicyStatuses = () => {
+	compileStatus.set('idle');
+	compileError.set(null);
+	saveStatus.set('idle');
+	saveError.set(null);
+	deployStatus.set('idle');
+	deployError.set(null);
+	rollbackStatus.set('idle');
+	rollbackError.set(null);
+};

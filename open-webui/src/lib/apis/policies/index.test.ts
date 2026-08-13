@@ -43,9 +43,9 @@ describe('policy API client', () => {
 		updated_at: 1755093600000000000
 	};
 
-	it('fetchPolicies: GET /api/v1/policies with bearer token, parses {policies, total}', async () => {
+	it('fetchPolicies: GET /api/v1/policies?limit=1000 with bearer token, parses {policies, total}', async () => {
 		stubFetch(async (url, init) => {
-			expect(url).toBe('/api/v1/policies');
+			expect(url).toBe('/api/v1/policies?limit=1000');
 			expect(init.method).toBe('GET');
 			expect((init.headers as Record<string, string>).authorization).toBe('Bearer tok-1');
 			return jsonResponse({ policies: [policy], total: 1 });
@@ -56,6 +56,16 @@ describe('policy API client', () => {
 		expect(res.policies[0].id).toBe('budget');
 		// epoch-ns timestamps stay numbers, not ISO strings
 		expect(res.policies[0].created_at).toBe(1755093600000000000);
+	});
+
+	it('fetchPolicies: custom limit is passed through as a query param', async () => {
+		stubFetch(async (url) => {
+			expect(url).toBe('/api/v1/policies?limit=25');
+			return jsonResponse({ policies: [], total: 0 });
+		});
+
+		const res = await fetchPolicies('tok-1', 25);
+		expect(res.total).toBe(0);
 	});
 
 	it('fetchPolicy: GET with encoded id, returns full policy', async () => {

@@ -19,6 +19,7 @@
 		currentPolicy,
 		deployError,
 		deployStatus,
+		resetPolicyStatuses,
 		rollbackError,
 		rollbackStatus,
 		saveError,
@@ -49,6 +50,10 @@
 		notFound = false;
 		try {
 			const policy = await fetchPolicy(localStorage.token, policyId);
+			// Late response for a different policy (user navigated away while
+			// this fetch was in flight) must not write into the new policy's
+			// view — same lifetime bug class as the citation-state gotcha.
+			if (policy.id !== policyId) return;
 			currentPolicy.set(policy);
 			markdown = policy.markdown_content;
 			dirty = false;
@@ -74,7 +79,9 @@
 		saveError.set(null);
 		try {
 			const updated = await updatePolicy(localStorage.token, policyId, markdown);
-			currentPolicy.update((p) => (p ? { ...p, ...updated } : p));
+			// Id-guard: a save for policy A landing after navigation to B must
+			// not write A's data into B's view.
+			currentPolicy.update((p) => (p && p.id === policyId ? { ...p, ...updated } : p));
 			dirty = false;
 			saveStatus.set('success');
 			return true;
@@ -91,7 +98,9 @@
 		compileError.set(null);
 		try {
 			const res = await compilePolicy(localStorage.token, policyId);
-			currentPolicy.update((p) => (p ? { ...p, compiled_rego: res.compiled_rego } : p));
+			// Id-guard, same as doSave: a compile response for policy A must
+			// not write A's compiled_rego into B's preview.
+			currentPolicy.update((p) => (p && p.id === policyId ? { ...p, compiled_rego: res.compiled_rego } : p));
 			compileStatus.set('success');
 			return true;
 		} catch (e) {
@@ -202,6 +211,10 @@
 			goto('/', { replaceState: true });
 			return;
 		}
+		// The status/error stores are module-level: stale state from a
+		// previously viewed policy (✓ Compiled, stuck 'working', old errors)
+		// must not leak into this one.
+		resetPolicyStatuses();
 		loadPolicy();
 		window.addEventListener('keydown', handleKeydown);
 	});
@@ -209,6 +222,11 @@
 	onDestroy(() => {
 		scheduleCompile.cancel();
 		scheduleSave.cancel();
+		// Clicking "Back to Policies" (or any nav) IS what blurs the textarea,
+		// which schedules the 1s debounced save — without this, edits made in
+		// the blur window are dropped. Fire-and-forget PUT; `dirty` can only
+		// be true for a draft (the textarea is disabled when active).
+		if (dirty) void doSave();
 		window.removeEventListener('keydown', handleKeydown);
 		if (redirectTimer !== null) clearTimeout(redirectTimer);
 	});

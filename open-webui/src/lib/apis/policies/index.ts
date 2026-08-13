@@ -1,7 +1,7 @@
 import { WEBUI_API_BASE_URL } from '$lib/constants';
 
 // C1 backend contract (open_webui/routers/policies.py):
-//   GET    /api/v1/policies              -> { policies: PolicyListItem[], total }
+//   GET    /api/v1/policies?limit=N     -> { policies: PolicyListItem[], total } (backend defaults limit=50)
 //   POST   /api/v1/policies              -> 201 Policy (create, body {id,name,markdown_content})
 //   GET    /api/v1/policies/{id}         -> Policy | 404 {error}
 //   PUT    /api/v1/policies/{id}         -> Policy (draft only, body {markdown_content})
@@ -125,7 +125,11 @@ const request = async <T>(token: string, path: string, method: string, body?: un
 	return json as T;
 };
 
-export const fetchPolicies = (token: string) => request<PolicyListResponse>(token, '/policies', 'GET');
+// The backend defaults limit=50 with no upper cap; the list page passes an
+// explicit high limit so the table isn't silently truncated below the true
+// total (the nav badge reads `total`, which is unaffected by limit).
+export const fetchPolicies = (token: string, limit = 1000) =>
+	request<PolicyListResponse>(token, `/policies?limit=${limit}`, 'GET');
 
 export const fetchPolicy = (token: string, id: string) =>
 	request<Policy>(token, `/policies/${encodeURIComponent(id)}`, 'GET');
