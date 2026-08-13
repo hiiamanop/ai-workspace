@@ -7,6 +7,7 @@ class TaskIn(BaseModel):
     type: str
     data_classification: Literal["public", "internal", "confidential", "restricted"]
     estimated_context_tokens: int = 0
+    complexity: Literal["low", "medium", "high"] = "medium"
 
 
 class OrgIn(BaseModel):
