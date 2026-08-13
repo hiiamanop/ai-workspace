@@ -38,6 +38,31 @@ Or the whole stack via Docker: `cp .env.example .env` (`env_file: .env` is not o
 
 Open WebUI is reachable at `http://localhost:3001`; `WEBUI_SECRET_KEY` must be set in `.env` or the container refuses to start (see `.env.example`). The first account created via sign-up becomes admin. LLM providers (e.g. DeepSeek) are configured entirely inside Open WebUI's Admin Settings post-login, not via `.env`—this project deliberately keeps zero LLM provider secrets in scope.
 
+**MADE-routing setup (one-time, manual, after `open-webui` is up):**
+1. Create an automation admin account by signing up a second time with a
+   dedicated email (or reuse your first admin account) — put its
+   credentials in `.env` as `OPENWEBUI_ADMIN_EMAIL`/`OPENWEBUI_ADMIN_PASSWORD`.
+2. Run `node --import tsx src/openwebui-provision.ts` to install the
+   MADE-routing Filter (`openwebui-filters/made_routing.py`) into Open
+   WebUI. Re-run this any time the Filter's source changes, or after a
+   fresh volume/deploy.
+3. In Open WebUI's Admin Settings → Models, create the tier models for
+   each brand (e.g. `deepseek-v4-flash`, `deepseek-v4-pro`), each with a
+   `meta.made_scores` object: `{ "brand": "deepseek", "cost_per_1k_tokens":
+   <num>, "quality": <0-1>, "latency": <0-1>, "business_risk": <0-1>,
+   "context_window_tokens": <num> }`.
+4. Create one brand entry per brand (e.g. id `deepseek`) — `base_model_id`
+   pointing at any one of that brand's tiers (MADE overrides it on every
+   call while healthy), `meta.made_scores` = `{ "brand": "deepseek" }`
+   only (no cost/quality/etc — this is what the Filter and health monitor
+   use to recognize it as the brand entry, not a real tier).
+5. To enable the health monitor: sign in as the automation admin
+   (`POST /api/v1/auths/signin`) to get a token, set it as
+   `OPENWEBUI_HEALTH_MONITOR_TOKEN` in `.env`, restart the `app` service.
+   This token is separate from step 1's email/password on purpose — the
+   monitor only needs read + toggle access, not the ability to re-run
+   sign-in itself.
+
 GenOffice (`genoffice/`) is its own npm workspace root, vendored separately — `cd genoffice && npm install` before touching anything under it. Its own commands: `npm run typecheck` / `npm run test -- --run` (vitest) scoped per-app, e.g. `cd genoffice/apps/docs && npm run typecheck`.
 
 ## Architecture
