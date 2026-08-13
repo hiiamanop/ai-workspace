@@ -56,6 +56,24 @@ Both loops accept optional `streamCallbacks` (`onDelta`, `onToolCallDelta`, `onT
 
 **MADE integration specifics:** `decide()` calls take `DecideRequest{task, org, decision_kind, candidates, policy_set}`. `decision_kind` is `"model_selection" | "tool_selection" | "human_approval"`. `src/context-guard.ts`'s `ensureCandidateFits()` re-checks capacity mid-loop (not just at the start of a turn) and can switch models if a growing conversation would exceed the current model's context window — it re-derives its `DecideRequest` from a caller-supplied `baseRequest` rather than building its own, specifically to avoid drifting from whatever policy classification the caller already established.
 
+## Development with Two Agents
+
+This repo uses a two-agent workflow to maintain clarity and separation of concerns:
+
+- **Researcher Agent** (`~/.claude/agents/researcher.md`): brainstorming, spec writing, plan writing, and all review phases (task review, re-review, final whole-branch review).
+- **Coder Agent** (`~/.claude/agents/coder.md`): implementation, testing, and progress reporting.
+
+Each agent has detailed task specs in its own file. The researcher writes work products (specs, plans) that the coder receives and implements; the coder reports results, the researcher reviews and either approves or requests fixes. This cycle repeats until the work is ready to merge.
+
+**Key handoff points:**
+1. Researcher: brainstorm + spec → plan (ready for coder)
+2. Coder: plan → implementation + tests + report (ready for researcher's task review)
+3. Researcher: review → approve or request fixes
+4. If fixes needed: coder makes corrections → researcher re-reviews
+5. Researcher: final whole-branch review (all commits) → merge-ready or blocked
+
+For task assignment, always specify which agent should act (researcher for design/review, coder for implementation/testing). The agent will read its spec file and proceed accordingly.
+
 ## Workflow
 
 This repo is developed via the [superpowers](https://github.com) skill workflow: brainstorming → design spec (`docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`) → implementation plan (`docs/superpowers/plans/YYYY-MM-DD-<topic>.md`) → subagent-driven-development (fresh subagent per task, task-scoped review, final whole-branch review) → finishing-a-development-branch. Feature branches happen in a worktree under `.worktrees/` (gitignored) with a per-plan ledger under `.superpowers/sdd/` (gitignored, deleted on successful merge). Skim recent files under `docs/superpowers/` before starting related work — they're the authoritative record of what was actually decided and why, more current than any older design doc that later got superseded (e.g. the original top-level design spec chose Univer as the document editor; that was later reversed in favor of GenOffice — trust the most recent dated doc, not the oldest one).
