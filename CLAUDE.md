@@ -55,9 +55,9 @@ Open WebUI is reachable at `http://localhost:3001`; `WEBUI_SECRET_KEY` must be s
    each brand (e.g. `deepseek-v4-flash`, `deepseek-v4-pro`), each with a
    `meta.made_scores` object containing cost and performance metrics.
    **IMPORTANT:** Every tier MUST include `cost_per_1k_tokens` (numeric, lower=better).
-   **Critical:** When creating each tier model, grant public read access via the
-   `access_grants` field in the create payload: `"access_grants": [{"principal_type": "anyone", "principal_id": "*", "permission": "read"}]`.
-   This grant is set once and never revoked — tiers remain publicly dispatchable at all times,
+   **Critical:** When creating each tier model, grant access to every logged-in Open WebUI user via the
+   `access_grants` field in the create payload: `"access_grants": [{"principal_type": "user", "principal_id": "*", "permission": "read"}]`.
+   This grant is set once and never revoked — tiers remain dispatchable at all times,
    regardless of MADE's health status. If Open WebUI's UI doesn't expose this field, create tiers
    via direct `POST /api/v1/models/create` call instead (token obtained via `POST /api/v1/auths/signin`):
    ```bash
@@ -67,11 +67,16 @@ Open WebUI is reachable at `http://localhost:3001`; `WEBUI_SECRET_KEY` must be s
      -d '{
        "id": "deepseek-v4-flash",
        "name": "DeepSeek Flash",
+       "base_model_id": "deepseek-v3",
        "meta": {"made_scores": {"brand": "deepseek", "cost_per_1k_tokens": 0.0005, "quality": 0.6, "latency": 10, "business_risk": 0.1, "context_window_tokens": 32000}},
        "params": {},
-       "access_grants": [{"principal_type": "anyone", "principal_id": "*", "permission": "read"}]
+       "access_grants": [{"principal_type": "user", "principal_id": "*", "permission": "read"}]
      }'
    ```
+   **IMPORTANT:** `base_model_id` MUST be set to an actual model id as it appears in Open WebUI's
+   Admin Settings → Connections (e.g., the real DeepSeek model identifier configured in that connection).
+   Without it, the tier will be created but excluded from model listings and dispatching. Look up your
+   actual provider model ids in Admin Settings before creating tiers.
 5. Create one brand entry per brand (e.g. id `deepseek`) — `base_model_id`
    pointing at any one of that brand's tiers (MADE overrides it on every
    call while healthy). The brand entry's `meta.made_scores` MUST contain

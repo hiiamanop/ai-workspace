@@ -159,6 +159,7 @@ class Filter:
                 json={
                     "task": {
                         "type": "chat",
+                        # Hardcoded to "internal" — sensitivity classification is out of scope for this integration; only complexity is dynamically assessed
                         "data_classification": "internal",
                         "estimated_context_tokens": estimated_tokens,
                         "complexity": complexity,

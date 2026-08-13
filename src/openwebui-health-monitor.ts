@@ -122,13 +122,10 @@ export function startHealthMonitor(
   deps: HealthCheckDeps & { intervalMs?: number }
 ): { stop(): void } {
   const intervalMs = deps.intervalMs ?? 60_000;
-  let lastKnownHealthy: boolean | undefined;
 
   const timer = setInterval(async () => {
     try {
-      const result = await checkAndSyncVisibility(deps);
-      // Track state across ticks to avoid redundant calls next time
-      lastKnownHealthy = result.madeHealthy;
+      await checkAndSyncVisibility(deps);
     } catch (err) {
       console.error("health monitor cycle failed:", err);
     }
