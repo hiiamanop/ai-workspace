@@ -14,6 +14,8 @@ from open_webui.models.policies import (
     PolicyListResponse,
     PolicyUpdateForm,
 )
+from open_webui.models.policy_audit_log import AUDIT_ACTIONS, PolicyAuditLogs, log_policy_action
+from open_webui.models.policy_versions import PolicyVersions
 from open_webui.utils.auth import get_current_user
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -76,6 +78,12 @@ async def made_deploy(policy_id: str, rego_content: str) -> tuple[str, Optional[
     if response.status_code == 200:
         return ('ok', None)
 
+    if response.status_code >= 500:
+        # MADE is up but unhealthy (5xx): its state is unknown, so treat it
+        # like unreachable — never attempt a rollback against it (spec FR-D1).
+        log.error('deploy-policy: MADE returned status %s', response.status_code)
+        return ('unreachable', None)
+
     try:
         made_error = response.json().get('detail') or response.text
     except Exception:
@@ -104,6 +112,7 @@ async def create_policy(
         return policy_error(409, 'Policy id already exists')
 
     policy = await Policies.insert_new_policy(user.id, form_data, db=db)
+    await log_policy_action(policy.id, 'create', user.id, after=policy.model_dump(), db=db)
     return JSONResponse(status_code=201, content=policy.model_dump())
 
 
@@ -165,6 +174,14 @@ async def update_policy_by_id(
         return policy_error(400, "Can't edit active policy")
 
     updated = await Policies.update_policy_markdown(policy_id, form_data, db=db)
+    await log_policy_action(
+        policy_id,
+        'update',
+        user.id,
+        before={'markdown_content': policy.markdown_content},
+        after={'markdown_content': updated.markdown_content},
+        db=db,
+    )
     return updated.model_dump()
 
 
@@ -189,6 +206,9 @@ async def delete_policy_by_id(
     deleted = await Policies.delete_policy_by_id(policy_id, db=db)
     if not deleted:
         return policy_error(500, 'Failed to delete policy')
+    # Logged after the delete: the audit row outlives the policy row (no FK),
+    # so the trail survives even though the policy is gone.
+    await log_policy_action(policy_id, 'delete', user.id, before=policy.model_dump(), db=db)
     return JSONResponse(status_code=204, content=None)
 
 
@@ -216,6 +236,10 @@ async def compile_policy_by_id(
             )
     except httpx.HTTPError as exc:
         log.error('compile-policy: node backend unreachable: %s', exc)
+        await log_policy_action(
+            policy_id, 'compile', user.id, compile_success=False,
+            compile_error='Compiler service unreachable', db=db,
+        )
         return policy_error(503, 'Compiler service unreachable', 'The Node backend could not be reached')
 
     if response.status_code != 200:
@@ -223,14 +247,26 @@ async def compile_policy_by_id(
             detail = response.json().get('error')
         except Exception:
             detail = f'Compiler returned status {response.status_code}'
+        await log_policy_action(
+            policy_id, 'compile', user.id, compile_success=False,
+            compile_error=detail or 'LLM compilation failed', db=db,
+        )
         return policy_error(400, detail or 'LLM compilation failed')
 
     body = response.json()
     rego = body.get('rego')
     if not rego:
+        await log_policy_action(
+            policy_id, 'compile', user.id, compile_success=False,
+            compile_error='Compiler response missing rego', db=db,
+        )
         return policy_error(400, 'LLM compilation failed', 'Compiler response missing rego')
 
     await Policies.save_compiled_rego(policy_id, rego, db=db)
+    await log_policy_action(
+        policy_id, 'compile', user.id, compile_success=True,
+        before={'compiled_rego': policy.compiled_rego}, after={'compiled_rego': rego}, db=db,
+    )
     return {'compiled_rego': rego, 'warnings': body.get('warnings', [])}
 
 
@@ -266,7 +302,14 @@ async def deploy_policy_by_id(
     outcome, made_error = await made_deploy(policy_id, policy.compiled_rego)
 
     if outcome == 'unreachable':
-        # MADE state unknown — no rollback, policy untouched
+        # MADE state unknown — no rollback, policy otherwise untouched. The
+        # last_error write is deliberate: operators need the signal, and
+        # FR-D1's test asserts it (spec C3-D).
+        await Policies.update_deploy_state(policy_id, last_error='MADE unreachable', db=db)
+        await log_policy_action(
+            policy_id, 'deploy', user.id,
+            before={'status': policy.status}, made_response={'outcome': 'unreachable'}, db=db,
+        )
         return policy_error(502, 'MADE unreachable', 'No rollback attempted; retry deploy later')
 
     if outcome == 'ok':
@@ -279,12 +322,29 @@ async def deploy_policy_by_id(
             clear_error=True,
             db=db,
         )
+        # Version row only after MADE accepted the Rego; failed deploys never
+        # create one (FR-B1).
+        await PolicyVersions.create_version(policy_id, policy.compiled_rego, user.id, db=db)
+        await log_policy_action(
+            policy_id, 'deploy', user.id,
+            before={'status': 'draft'}, after={'status': 'active'},
+            made_response={'outcome': 'ok'}, db=db,
+        )
         return {'status': 'active', 'deployed_at': now, 'message': 'Policy deployed successfully'}
 
     # MADE rejected the new Rego
     if policy.active_rego:
         rollback_outcome, rollback_error = await made_deploy(policy_id, policy.active_rego)
         await Policies.update_deploy_state(policy_id, status='draft', last_error=made_error or '', db=db)
+        await log_policy_action(
+            policy_id, 'deploy', user.id,
+            before={'status': 'draft'}, after={'status': 'draft'},
+            made_response={
+                'outcome': 'error', 'error': made_error,
+                'rolled_back': rollback_outcome == 'ok',
+            },
+            db=db,
+        )
         if rollback_outcome == 'ok':
             return JSONResponse(
                 status_code=400,
@@ -303,6 +363,11 @@ async def deploy_policy_by_id(
 
     # First deploy failed: nothing to roll back to
     await Policies.update_deploy_state(policy_id, last_error=made_error or '', db=db)
+    await log_policy_action(
+        policy_id, 'deploy', user.id,
+        before={'status': 'draft'}, after={'status': 'draft'},
+        made_response={'outcome': 'error', 'error': made_error, 'rolled_back': False}, db=db,
+    )
     return JSONResponse(
         status_code=400,
         content={
@@ -344,12 +409,27 @@ async def rollback_policy_by_id(
     # unreachable on first deploys (deploy-on-active returns 400), so relaxed.
     if not policy.previous_rego:
         await Policies.update_deploy_state(policy_id, status='draft', db=db)
+        await log_policy_action(
+            policy_id, 'rollback', user.id,
+            before={'status': 'active'}, after={'status': 'draft'},
+            made_response={'outcome': 'ok', 'note': 'no previous version; policy taken offline for editing'}, db=db,
+        )
         return {'status': 'draft', 'message': 'Policy reverted to draft. MADE keeps running the current Rego.'}
 
     outcome, made_error = await made_deploy(policy_id, policy.previous_rego)
     if outcome == 'unreachable':
+        await log_policy_action(
+            policy_id, 'rollback', user.id,
+            before={'status': 'active'}, after={'status': 'active'},
+            made_response={'outcome': 'unreachable'}, db=db,
+        )
         return policy_error(502, 'MADE unreachable', 'No rollback attempted; policy stays active')
     if outcome == 'error':
+        await log_policy_action(
+            policy_id, 'rollback', user.id,
+            before={'status': 'active'}, after={'status': 'active'},
+            made_response={'outcome': 'error', 'error': made_error}, db=db,
+        )
         return policy_error(400, f'MADE rejected rollback: {made_error}', 'Policy stays active; fix MADE and retry')
 
     await Policies.update_deploy_state(
@@ -359,4 +439,62 @@ async def rollback_policy_by_id(
         clear_previous=True,
         db=db,
     )
+    # FR-C1: rollback is NOT a deployment — no version row is created.
+    await log_policy_action(
+        policy_id, 'rollback', user.id,
+        before={'status': 'active'}, after={'status': 'draft'},
+        made_response={'outcome': 'ok'}, db=db,
+    )
     return {'status': 'draft', 'message': 'Rolled back to previous version'}
+
+
+############################
+# AuditLogPolicyById (C3-A reader)
+############################
+
+
+@router.get('/{policy_id}/audit')
+async def get_policy_audit_log(
+    request: Request,
+    policy_id: str,
+    action: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    user=Depends(require_admin),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Immutable audit trail for a policy, newest first (FR-A3, optional).
+
+    No policy-exists check: the trail must stay readable after the policy is
+    deleted (the audit row outlives the policy row).
+    """
+    if action is not None and action not in AUDIT_ACTIONS:
+        return policy_error(400, 'Invalid action filter', f"action must be one of {', '.join(AUDIT_ACTIONS)}")
+
+    entries, total = await PolicyAuditLogs.get_for_policy(
+        policy_id, action=action, skip=offset, limit=limit, db=db
+    )
+    return {'entries': [e.model_dump() for e in entries], 'total': total}
+
+
+############################
+# VersionsPolicyById (C3-B reader)
+############################
+
+
+@router.get('/{policy_id}/versions')
+async def get_policy_versions(
+    request: Request,
+    policy_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    user=Depends(require_admin),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Immutable changelog of deployed Rego, newest first (FR-B3, optional)."""
+    policy = await Policies.get_policy_by_id(policy_id, db=db)
+    if not policy:
+        return policy_error(404, 'Policy not found')
+
+    versions, total = await PolicyVersions.get_versions(policy_id, skip=offset, limit=limit, db=db)
+    return {'versions': [v.model_dump() for v in versions], 'total': total}
