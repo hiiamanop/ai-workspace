@@ -10,6 +10,7 @@ import type { AgentTurnRequest } from "./agent-turn.ts";
 import type { ChatMessage } from "./types.ts";
 import { callWebSearch, type WebSearchResponse } from "./mcp/searxng-client.ts";
 import { startHealthMonitor } from "./openwebui-health-monitor.ts";
+import { compilePolicy, CompileError } from "./openwebui-policy-compiler.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST_DIR = path.join(__dirname, "..", "client", "dist");
@@ -259,6 +260,38 @@ export function createServer(
           res.end(JSON.stringify(result));
         } catch (err) {
           res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: (err as Error).message }));
+        }
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/api/compile-policy") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const raw = Buffer.concat(chunks).toString("utf8");
+
+        let body: { markdown?: unknown };
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid JSON body" }));
+          return;
+        }
+
+        if (typeof body.markdown !== "string" || body.markdown.trim() === "") {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "markdown field is required" }));
+          return;
+        }
+
+        try {
+          const result = await compilePolicy(body.markdown);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (err) {
+          const status = err instanceof CompileError ? 400 : 500;
+          res.writeHead(status, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: (err as Error).message }));
         }
         return;
