@@ -5,7 +5,7 @@ import time
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from open_webui.internal.db import get_async_session
 from open_webui.models.policies import (
@@ -42,9 +42,13 @@ def policy_error(status_code: int, error: str, details: Optional[str] = None) ->
 
 
 async def require_admin(user=Depends(get_current_user)):
-    """Spec AC-1: non-admin gets 403 (deliberately, not get_admin_user's 401)."""
+    """Spec AC-1: non-admin gets 403 (deliberately, not get_admin_user's 401).
+
+    Raised, not returned: a Response returned from a dependency would be
+    passed to the endpoint as its `user` argument in this FastAPI version.
+    """
     if user.role != 'admin':
-        return policy_error(403, 'Admin access required')
+        raise HTTPException(status_code=403, detail='Admin access required')
     return user
 
 
@@ -250,6 +254,11 @@ async def deploy_policy_by_id(
     if not policy.compiled_rego:
         return policy_error(400, 'Compile first', 'No compiled Rego available; compile before deploying')
 
+    # Atomic claim (draft→draft): a concurrent deploy of the same policy
+    # fails here with 400 and never reaches MADE.
+    if not await Policies.reserve_for_deploy(policy_id, db=db):
+        return policy_error(400, 'Policy already active', 'A concurrent deploy of this policy is in progress')
+
     # Backup the last deployed version (if any) so a failed deploy can roll back
     if policy.active_rego:
         await Policies.update_deploy_state(policy_id, previous_rego=policy.active_rego, db=db)
@@ -303,3 +312,51 @@ async def deploy_policy_by_id(
             'message': 'Deployment failed. Fix the Rego and retry.',
         },
     )
+
+
+############################
+# RollbackPolicyById (spec FR-4, implemented in C1)
+############################
+
+
+@router.post('/{policy_id}/rollback')
+async def rollback_policy_by_id(
+    request: Request,
+    policy_id: str,
+    user=Depends(require_admin),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Revert an active policy to draft for editing.
+
+    Without this, an active policy is frozen forever (deploy, edit and
+    delete all refuse 'active') — the plan's rollback tests and the
+    fix-then-redeploy workflow both need this transition.
+    """
+    policy = await Policies.get_policy_by_id(policy_id, db=db)
+    if not policy:
+        return policy_error(404, 'Policy not found')
+    if not policy.is_active:
+        return policy_error(400, 'Policy is not active', 'Only active policies can be rolled back')
+
+    # First deployment: nothing previous to restore. Take the policy offline
+    # for editing; MADE keeps running the current Rego.
+    # ponytail: spec FR-4's 'previous_rego must exist' precondition is
+    # unreachable on first deploys (deploy-on-active returns 400), so relaxed.
+    if not policy.previous_rego:
+        await Policies.update_deploy_state(policy_id, status='draft', db=db)
+        return {'status': 'draft', 'message': 'Policy reverted to draft. MADE keeps running the current Rego.'}
+
+    outcome, made_error = await made_deploy(policy_id, policy.previous_rego)
+    if outcome == 'unreachable':
+        return policy_error(502, 'MADE unreachable', 'No rollback attempted; policy stays active')
+    if outcome == 'error':
+        return policy_error(400, f'MADE rejected rollback: {made_error}', 'Policy stays active; fix MADE and retry')
+
+    await Policies.update_deploy_state(
+        policy_id,
+        status='draft',
+        active_rego=policy.previous_rego,
+        clear_previous=True,
+        db=db,
+    )
+    return {'status': 'draft', 'message': 'Rolled back to previous version'}

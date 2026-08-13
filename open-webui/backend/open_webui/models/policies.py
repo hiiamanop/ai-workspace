@@ -3,7 +3,7 @@ from typing import Optional
 
 from open_webui.internal.db import Base, get_async_db_context
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Column, Text, BigInteger, delete, func, select
+from sqlalchemy import Column, Text, BigInteger, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -59,6 +59,8 @@ class PolicyModel(BaseModel):
 
 
 class PolicyListItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     name: str
     status: str
@@ -166,6 +168,23 @@ class PolicyTable:
             await db.commit()
             return PolicyModel.model_validate(policy)
 
+    async def reserve_for_deploy(self, id: str, db: Optional[AsyncSession] = None) -> bool:
+        """Atomically claim a draft policy for deployment (draft stays draft).
+
+        The conditional UPDATE is the deploy lock: with SQLite's write lock,
+        only one concurrent deploy of the same policy can pass this, so a
+        second one gets 400 instead of clobbering MADE. Crash mid-deploy
+        leaves status='draft' — retryable, no stuck states.
+        """
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                update(Policy)
+                .where(Policy.id == id, Policy.status == 'draft')
+                .values(updated_at=int(time.time_ns()))
+            )
+            await db.commit()
+            return result.rowcount > 0
+
     async def update_deploy_state(
         self,
         id: str,
@@ -176,6 +195,7 @@ class PolicyTable:
         deployed_at: Optional[int] = None,
         last_error: Optional[str] = None,
         clear_error: bool = False,
+        clear_previous: bool = False,
         db: Optional[AsyncSession] = None,
     ) -> Optional[PolicyModel]:
         async with get_async_db_context(db) as db:
@@ -189,6 +209,8 @@ class PolicyTable:
                 policy.active_rego = active_rego
             if previous_rego is not None:
                 policy.previous_rego = previous_rego
+            if clear_previous:
+                policy.previous_rego = None
             if deployed_at is not None:
                 policy.deployed_at = deployed_at
             if last_error is not None:
