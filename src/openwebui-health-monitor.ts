@@ -1,19 +1,21 @@
 export interface HealthCheckDeps {
   madeUrl: string;
   openwebuiUrl: string;
-  adminToken: string;
+  adminEmail: string;
+  adminPassword: string;
   fetchFn?: typeof fetch;
 }
 
 export interface HealthCheckResult {
   madeHealthy: boolean;
   changed: boolean;
+  toggleErrors?: string[];
 }
 
 interface OpenWebUiModel {
   id: string;
   is_active: boolean;
-  meta?: { made_scores?: { brand?: string } };
+  meta?: { made_scores?: { brand?: string; cost_per_1k_tokens?: number } };
 }
 
 async function isMadeHealthy(madeUrl: string, fetchFn: typeof fetch): Promise<boolean> {
@@ -26,16 +28,57 @@ async function isMadeHealthy(madeUrl: string, fetchFn: typeof fetch): Promise<bo
   }
 }
 
+/**
+ * Determine if a model is the brand entry within its brand group.
+ * Brand entry: has no cost_per_1k_tokens. Tier entry: has cost_per_1k_tokens.
+ */
+function isBrandEntry(model: OpenWebUiModel): boolean {
+  return model.meta?.made_scores?.cost_per_1k_tokens === undefined;
+}
+
 export async function checkAndSyncVisibility(deps: HealthCheckDeps): Promise<HealthCheckResult> {
   const fetchFn = deps.fetchFn ?? fetch;
+  const errors: string[] = [];
+
+  // Sign in to get a fresh admin token (avoids expiry issues)
+  const signinRes = await fetchFn(`${deps.openwebuiUrl}/api/v1/auths/signin`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: deps.adminEmail, password: deps.adminPassword }),
+  });
+  const signinBody = (await signinRes.json()) as { token?: string; detail?: string };
+  if (!signinRes.ok || !signinBody.token) {
+    errors.push(`sign-in failed: ${signinBody.detail ?? `status ${signinRes.status}`}`);
+    return { madeHealthy: false, changed: false, toggleErrors: errors };
+  }
+  const adminToken = signinBody.token;
+
   const madeHealthy = await isMadeHealthy(deps.madeUrl, fetchFn);
 
-  const listRes = await fetchFn(`${deps.openwebuiUrl}/api/v1/models/list`, {
-    headers: { authorization: `Bearer ${deps.adminToken}` },
-  });
-  const { data: models } = (await listRes.json()) as { data: OpenWebUiModel[] };
+  // Fetch models with pagination (30 per page)
+  const allModels: OpenWebUiModel[] = [];
+  let page = 1;
+  while (true) {
+    const listRes = await fetchFn(`${deps.openwebuiUrl}/api/v1/models/list?page=${page}`, {
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    if (!listRes.ok) {
+      errors.push(`models/list page ${page} failed: status ${listRes.status}`);
+      break;
+    }
+    const body = (await listRes.json()) as { items?: OpenWebUiModel[]; total?: number };
+    if (!Array.isArray(body.items)) {
+      errors.push(`models/list returned invalid format`);
+      break;
+    }
+    allModels.push(...body.items);
+    if (body.items.length < 30 || allModels.length >= (body.total ?? 0)) {
+      break;
+    }
+    page++;
+  }
 
-  const brandedModels = models.filter((m) => m.meta?.made_scores?.brand);
+  const brandedModels = allModels.filter((m) => m.meta?.made_scores?.brand);
   const byBrand = new Map<string, OpenWebUiModel[]>();
   for (const m of brandedModels) {
     const brand = m.meta!.made_scores!.brand!;
@@ -44,28 +87,71 @@ export async function checkAndSyncVisibility(deps: HealthCheckDeps): Promise<Hea
 
   let changed = false;
   for (const brandModels of byBrand.values()) {
-    // Heuristic: the brand entry is the one whose id matches its own brand string;
-    // every other model in the group is a tier.
     for (const m of brandModels) {
-      const isBrandEntry = m.id === m.meta!.made_scores!.brand;
-      const wantActive = isBrandEntry ? madeHealthy : !madeHealthy;
-      if (m.is_active !== wantActive) {
-        changed = true;
-        await fetchFn(`${deps.openwebuiUrl}/api/v1/models/model/toggle?id=${encodeURIComponent(m.id)}`, {
+      const isBrand = isBrandEntry(m);
+
+      if (isBrand) {
+        // Brand entry: toggle is_active based on MADE health
+        const wantActive = madeHealthy;
+        if (m.is_active !== wantActive) {
+          changed = true;
+          const toggleRes = await fetchFn(
+            `${deps.openwebuiUrl}/api/v1/models/model/toggle?id=${encodeURIComponent(m.id)}`,
+            {
+              method: "POST",
+              headers: { authorization: `Bearer ${adminToken}` },
+            }
+          );
+          if (!toggleRes.ok) {
+            errors.push(`toggle ${m.id} failed: status ${toggleRes.status}`);
+          }
+        }
+      } else {
+        // Tier entry: use access grants for visibility control
+        const wantPublicGrant = !madeHealthy; // reveal tiers when MADE is unhealthy
+        // For now, track desired state in memory (ideally we'd read from the /list response)
+        const grants = wantPublicGrant
+          ? [{ principal_type: "anyone", principal_id: "*", permission: "read" }]
+          : [];
+
+        const grantRes = await fetchFn(`${deps.openwebuiUrl}/api/v1/models/model/access/update`, {
           method: "POST",
-          headers: { authorization: `Bearer ${deps.adminToken}` },
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${adminToken}`,
+          },
+          body: JSON.stringify({ id: m.id, access_grants: grants }),
         });
+        if (!grantRes.ok) {
+          errors.push(`access/update ${m.id} failed: status ${grantRes.status}`);
+        } else {
+          changed = true;
+        }
       }
     }
   }
 
-  return { madeHealthy, changed };
+  if (changed) {
+    console.log(`Health monitor: MADE is now ${madeHealthy ? "healthy" : "unhealthy"}`);
+  }
+
+  return { madeHealthy, changed, toggleErrors: errors.length > 0 ? errors : undefined };
 }
 
-export function startHealthMonitor(deps: HealthCheckDeps & { intervalMs?: number }): { stop(): void } {
+export function startHealthMonitor(
+  deps: HealthCheckDeps & { intervalMs?: number }
+): { stop(): void } {
   const intervalMs = deps.intervalMs ?? 60_000;
-  const timer = setInterval(() => {
-    checkAndSyncVisibility(deps).catch((err) => console.error("health monitor cycle failed:", err));
+  let lastKnownHealthy: boolean | undefined;
+
+  const timer = setInterval(async () => {
+    try {
+      const result = await checkAndSyncVisibility(deps);
+      // Track state across ticks to avoid redundant calls next time
+      lastKnownHealthy = result.madeHealthy;
+    } catch (err) {
+      console.error("health monitor cycle failed:", err);
+    }
   }, intervalMs);
   timer.unref();
   return { stop: () => clearInterval(timer) };
