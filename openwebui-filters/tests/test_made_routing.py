@@ -60,6 +60,11 @@ def test_inlet_passes_through_when_model_is_already_a_tier():
                 "http://open-webui:8080/api/v1/models/list?page=1",
                 payload={"items": [BRAND_MODEL] + TIER_MODELS, "total": 3},
             )
+            # Explicitly fail if MADE is called (regression guard)
+            m.post(
+                "http://made:8000/decide",
+                exception=Exception("MADE should never be consulted for a concrete tier model"),
+            )
             f = make_filter()
             body = {
                 "model": "deepseek-v4-flash",
@@ -70,6 +75,11 @@ def test_inlet_passes_through_when_model_is_already_a_tier():
 
             assert result["model"] == "deepseek-v4-flash"
             # Already a concrete tier — MADE must never be consulted.
+            # Verify no requests were made to MADE
+            decide_requests = m.requests.get(("POST", "http://made:8000/decide"))
+            assert (
+                not decide_requests
+            ), "MADE's /decide should never be called for an already-concrete tier model"
 
     asyncio.run(run())
 
@@ -135,10 +145,11 @@ def test_inlet_falls_back_to_cheapest_qualifying_tier_when_made_unreachable():
 def test_inlet_sends_raw_cost_values_to_made_not_inverted():
     """Regression test: cost scores sent to MADE must be raw values (lower=better), not inverted goodness scores.
 
-    By selecting the flash model (cheapest), we verify that costs were sent as raw values (lower=better)
-    and not inverted (where higher values = better quality).
+    Inspects the actual HTTP request payload sent to MADE's /decide endpoint to verify
+    that candidate scores include raw cost values (0.0005, 0.003), not inverted values.
     """
     async def run():
+        from urllib.parse import urlparse
         with aioresponses() as m:
             m.get(
                 "http://open-webui:8080/api/v1/models/list?page=1",
@@ -171,8 +182,55 @@ def test_inlet_sends_raw_cost_values_to_made_not_inverted():
             result = await f.inlet(body, __user__={"id": "u1"})
 
             # Flash should be selected (cheapest tier)
-            # This proves costs were sent as raw values (0.0005, 0.003, not inverted)
             assert result["model"] == "deepseek-v4-flash"
+
+            # Verify costs were sent as raw values by inspecting the actual request to MADE
+            # aioresponses stores requests as: {(method, URL): [RequestCall, ...]}
+            # where RequestCall has kwargs with the json payload
+            decide_url_key = None
+            for key in m.requests.keys():
+                method, url = key
+                if method == "POST" and "made:8000" in str(url) and "/decide" in str(url):
+                    decide_url_key = key
+                    break
+
+            assert decide_url_key, "MADE's /decide endpoint should have been called"
+
+            # Get the request calls for the /decide endpoint
+            decide_calls = m.requests[decide_url_key]
+            assert len(decide_calls) > 0, "MADE's /decide should have been called"
+
+            # Extract the JSON payload from the first call
+            request_call = decide_calls[0]
+            request_body = request_call.kwargs.get("json")
+            assert request_body, "Request should have a JSON payload"
+
+            # Verify the candidates and their cost scores
+            assert "candidates" in request_body, "Request should have candidates"
+            candidates = request_body["candidates"]
+
+            # Find flash and pro candidates by their IDs
+            flash_candidate = next(
+                (c for c in candidates if c.get("id") == "deepseek-v4-flash"),
+                None,
+            )
+            pro_candidate = next(
+                (c for c in candidates if c.get("id") == "deepseek-v4-pro"),
+                None,
+            )
+
+            # Verify raw cost values (not inverted)
+            assert flash_candidate, "flash candidate should exist in request"
+            assert "scores" in flash_candidate, "flash candidate should have scores"
+            assert (
+                flash_candidate["scores"].get("cost") == 0.0005
+            ), f"Flash cost should be 0.0005 (raw), got {flash_candidate['scores'].get('cost')}"
+
+            assert pro_candidate, "pro candidate should exist in request"
+            assert "scores" in pro_candidate, "pro candidate should have scores"
+            assert (
+                pro_candidate["scores"].get("cost") == 0.003
+            ), f"Pro cost should be 0.003 (raw), got {pro_candidate['scores'].get('cost')}"
 
     asyncio.run(run())
 
