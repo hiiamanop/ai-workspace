@@ -26,7 +26,13 @@ export async function provisionFilter(deps: ProvisionDeps): Promise<ProvisionRes
     return { ok: false, error: signinBody.detail ?? `sign-in failed with status ${signinRes.status}` };
   }
 
-  const content = await readFile(deps.filterSourcePath, "utf8");
+  let content: string;
+  try {
+    content = await readFile(deps.filterSourcePath, "utf8");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `failed to read filter source: ${message}` };
+  }
   const now = Math.floor(Date.now() / 1000);
 
   const syncRes = await fetchFn(`${deps.openwebuiUrl}/api/v1/functions/sync`, {
