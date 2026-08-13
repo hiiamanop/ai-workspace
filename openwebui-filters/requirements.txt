@@ -1,4 +1,4 @@
-requests==2.32.3
 pydantic==2.13.4
+aiohttp==3.13.5
 pytest==8.3.4
-requests-mock==1.12.1
+aioresponses==0.7.6

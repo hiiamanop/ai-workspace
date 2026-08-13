@@ -18,7 +18,7 @@ Whether `body["model"]` names a brand or an already-concrete tier is
 determined by that presence/absence of `cost_per_1k_tokens` on the
 matching registry entry, not by list position or count.
 """
-import requests
+import aiohttp
 from pydantic import BaseModel
 
 
@@ -36,8 +36,9 @@ class Filter:
     async def inlet(self, body: dict, __user__: dict = None) -> dict:
         model_id = body.get("model", "")
         try:
-            models = self._list_models()
-        except Exception:
+            models = await self._list_models()
+        except Exception as err:
+            print(f"MADE routing: model list fetch failed: {err}")
             return body  # can't even see the model registry — leave untouched
 
         target = next((m for m in models if m.get("id") == model_id), None)
@@ -60,58 +61,77 @@ class Filter:
         if not brand_candidates:
             return body
 
-        complexity = self._classify_complexity(body)
+        complexity = await self._classify_complexity(body)
         try:
-            selected = self._call_made(brand_candidates, complexity, body)
+            selected = await self._call_made(brand_candidates, complexity, body)
             if selected and any(c["id"] == selected for c in brand_candidates):
                 body["model"] = selected
                 return body
-        except Exception:
-            pass
+        except Exception as err:
+            print(f"MADE routing: /decide call failed: {err}, falling back to cheapest tier")
 
         fallback_model = _cheapest_qualifying(brand_candidates)
         if fallback_model is not None:
             body["model"] = fallback_model
         return body
 
-    def _list_models(self) -> list[dict]:
-        resp = requests.get(
-            f"{self.valves.OPENWEBUI_URL}/api/v1/models/list",
-            headers={"Authorization": f"Bearer {self.valves.OPENWEBUI_TOKEN}"},
-            timeout=self.valves.REQUEST_TIMEOUT_SECONDS,
-        )
-        resp.raise_for_status()
-        return resp.json().get("data", [])
+    async def _list_models(self) -> list[dict]:
+        """Fetch all models, paging through results (30 per page)."""
+        all_models = []
+        page = 1
+        async with aiohttp.ClientSession() as session:
+            while True:
+                async with session.get(
+                    f"{self.valves.OPENWEBUI_URL}/api/v1/models/list?page={page}",
+                    headers={"Authorization": f"Bearer {self.valves.OPENWEBUI_TOKEN}"},
+                    timeout=aiohttp.ClientTimeout(total=self.valves.REQUEST_TIMEOUT_SECONDS),
+                ) as resp:
+                    resp.raise_for_status()
+                    body = await resp.json()
+                    if not isinstance(body, dict):
+                        raise ValueError(f"Expected dict response, got {type(body).__name__}")
+                    items = body.get("items", [])
+                    if not isinstance(items, list):
+                        raise ValueError(f"Expected items to be a list, got {type(items).__name__}")
+                    all_models.extend(items)
+                    total = body.get("total", 0)
+                    if len(items) < 30 or len(all_models) >= total:
+                        break
+                    page += 1
+        return all_models
 
-    def _classify_complexity(self, body: dict) -> str:
+    async def _classify_complexity(self, body: dict) -> str:
         last_user_message = next(
             (m["content"] for m in reversed(body.get("messages", [])) if m.get("role") == "user"),
             "",
         )
         try:
-            resp = requests.post(
-                f"{self.valves.OPENWEBUI_URL}/api/chat/completions",
-                headers={"Authorization": f"Bearer {self.valves.OPENWEBUI_TOKEN}"},
-                json={
-                    "model": self.valves.CLASSIFIER_MODEL,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": "Rate the complexity of the user's message as exactly one word: low, medium, or high. Reply with only that word.",
-                        },
-                        {"role": "user", "content": last_user_message},
-                    ],
-                    "stream": False,
-                },
-                timeout=self.valves.REQUEST_TIMEOUT_SECONDS,
-            )
-            resp.raise_for_status()
-            text = resp.json()["choices"][0]["message"]["content"].strip().lower()
-            return text if text in ("low", "medium", "high") else "medium"
-        except Exception:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.valves.OPENWEBUI_URL}/api/chat/completions",
+                    headers={"Authorization": f"Bearer {self.valves.OPENWEBUI_TOKEN}"},
+                    json={
+                        "model": self.valves.CLASSIFIER_MODEL,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": "Rate the complexity of the user's message as exactly one word: low, medium, or high. Reply with only that word.",
+                            },
+                            {"role": "user", "content": last_user_message},
+                        ],
+                        "stream": False,
+                    },
+                    timeout=aiohttp.ClientTimeout(total=self.valves.REQUEST_TIMEOUT_SECONDS),
+                ) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+                    text = data["choices"][0]["message"]["content"].strip().lower()
+                    return text if text in ("low", "medium", "high") else "medium"
+        except Exception as err:
+            print(f"MADE routing: complexity classification failed: {err}, defaulting to medium")
             return "medium"
 
-    def _call_made(self, brand_candidates: list[dict], complexity: str, body: dict) -> str | None:
+    async def _call_made(self, brand_candidates: list[dict], complexity: str, body: dict) -> str | None:
         candidates = []
         for m in brand_candidates:
             scores = m.get("meta", {}).get("made_scores", {})
@@ -123,7 +143,7 @@ class Filter:
                 "kind": "model",
                 "cost_per_1k_tokens": scores.get("cost_per_1k_tokens", 0.01),
                 "scores": {
-                    "cost": 1.0 - min(scores.get("cost_per_1k_tokens", 0.01) / 0.05, 1.0),
+                    "cost": scores.get("cost_per_1k_tokens", 0.01),
                     "quality": scores.get("quality", 0.5),
                     "latency": scores.get("latency", 0.5),
                     "business_risk": scores.get("business_risk", 0.5),
@@ -133,25 +153,26 @@ class Filter:
 
         estimated_tokens = sum(len(m.get("content", "")) for m in body.get("messages", [])) // 4
 
-        resp = requests.post(
-            f"{self.valves.MADE_URL}/decide",
-            json={
-                "task": {
-                    "type": "chat",
-                    "data_classification": "internal",
-                    "estimated_context_tokens": estimated_tokens,
-                    "complexity": complexity,
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.valves.MADE_URL}/decide",
+                json={
+                    "task": {
+                        "type": "chat",
+                        "data_classification": "internal",
+                        "estimated_context_tokens": estimated_tokens,
+                        "complexity": complexity,
+                    },
+                    "decision_kind": "model_selection",
+                    "candidates": candidates,
                 },
-                "decision_kind": "model_selection",
-                "candidates": candidates,
-            },
-            timeout=self.valves.REQUEST_TIMEOUT_SECONDS,
-        )
-        resp.raise_for_status()
-        decision = resp.json()
-        if decision.get("requires_human_approval"):
-            return None
-        return decision.get("selected_candidate_id")
+                timeout=aiohttp.ClientTimeout(total=self.valves.REQUEST_TIMEOUT_SECONDS),
+            ) as resp:
+                resp.raise_for_status()
+                decision = await resp.json()
+                if decision.get("requires_human_approval"):
+                    return None
+                return decision.get("selected_candidate_id")
 
 
 def _brand_of(model: dict) -> str | None:
