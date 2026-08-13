@@ -42,26 +42,35 @@ Open WebUI is reachable at `http://localhost:3001`; `WEBUI_SECRET_KEY` must be s
 1. Create an automation admin account by signing up a second time with a
    dedicated email (or reuse your first admin account) — put its
    credentials in `.env` as `OPENWEBUI_ADMIN_EMAIL`/`OPENWEBUI_ADMIN_PASSWORD`.
-2. Run `node --import tsx src/openwebui-provision.ts` to install the
+2. Ensure `MADE_URL` and `CLASSIFIER_MODEL` are set in `.env` (see `.env.example`).
+   The provisioning script uses these to configure the Filter's valves.
+3. Run `node --import tsx src/openwebui-provision.ts` to install the
    MADE-routing Filter (`openwebui-filters/made_routing.py`) into Open
-   WebUI. Re-run this any time the Filter's source changes, or after a
-   fresh volume/deploy.
-3. In Open WebUI's Admin Settings → Models, create the tier models for
+   WebUI. The script automatically:
+   - Creates a long-lived API key for the Filter to use (avoids JWT expiry issues)
+   - Creates or updates the Filter function with its content
+   - Provisions the Filter's configuration (MADE_URL, Open WebUI URL, token, classifier model)
+   Re-run this any time the Filter's source changes, or after a fresh volume/deploy.
+4. In Open WebUI's Admin Settings → Models, create the tier models for
    each brand (e.g. `deepseek-v4-flash`, `deepseek-v4-pro`), each with a
-   `meta.made_scores` object: `{ "brand": "deepseek", "cost_per_1k_tokens":
-   <num>, "quality": <0-1>, "latency": <0-1>, "business_risk": <0-1>,
-   "context_window_tokens": <num> }`.
-4. Create one brand entry per brand (e.g. id `deepseek`) — `base_model_id`
+   `meta.made_scores` object containing cost and performance metrics.
+   **IMPORTANT:** Every tier MUST include `cost_per_1k_tokens` (numeric, lower=better).
+5. Create one brand entry per brand (e.g. id `deepseek`) — `base_model_id`
    pointing at any one of that brand's tiers (MADE overrides it on every
-   call while healthy), `meta.made_scores` = `{ "brand": "deepseek" }`
-   only (no cost/quality/etc — this is what the Filter and health monitor
-   use to recognize it as the brand entry, not a real tier).
-5. To enable the health monitor: sign in as the automation admin
-   (`POST /api/v1/auths/signin`) to get a token, set it as
-   `OPENWEBUI_HEALTH_MONITOR_TOKEN` in `.env`, restart the `app` service.
-   This token is separate from step 1's email/password on purpose — the
-   monitor only needs read + toggle access, not the ability to re-run
-   sign-in itself.
+   call while healthy). The brand entry's `meta.made_scores` MUST contain
+   ONLY `{ "brand": "deepseek" }` with NO `cost_per_1k_tokens`.
+   This discriminator is how the Filter and health monitor recognize the
+   brand entry from tier entries.
+6. To enable the health monitor: set `OPENWEBUI_ADMIN_EMAIL` and
+   `OPENWEBUI_ADMIN_PASSWORD` in `.env` (same account from step 1).
+   The health monitor signs in fresh on each check, avoiding token expiry
+   issues. Enable it by setting `HEALTH_MONITOR_ENABLED=true` and restarting.
+
+**Score polarity (for MADE's TOPSIS):**
+  - `cost_per_1k_tokens`: raw USD amount, lower is better (e.g., 0.0005, 0.003)
+  - `quality`: 0-1 scale, higher is better (e.g., 0.6, 0.9)
+  - `latency`: raw milliseconds (or seconds), lower is better (e.g., 10, 100)
+  - `business_risk`: 0-1 scale, lower is better (0=no risk)
 
 GenOffice (`genoffice/`) is its own npm workspace root, vendored separately — `cd genoffice && npm install` before touching anything under it. Its own commands: `npm run typecheck` / `npm run test -- --run` (vitest) scoped per-app, e.g. `cd genoffice/apps/docs && npm run typecheck`.
 
