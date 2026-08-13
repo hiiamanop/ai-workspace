@@ -42,8 +42,9 @@
 	$: status = $currentPolicy?.status ?? 'draft';
 	$: locked = status === 'active';
 
+	// Refetches (after deploy/rollback) run with loaded=true so the editor
+	// stays visible; only the initial load shows the "Loading…" state.
 	const loadPolicy = async () => {
-		loaded = false;
 		fetchError = null;
 		notFound = false;
 		try {
@@ -58,10 +59,12 @@
 				redirectTimer = setTimeout(() => goto('/workspace/policies'), 2000);
 			} else if (e instanceof ApiError && e.status === 403) {
 				fetchError = 'Admin access required. You do not have permission to manage policies.';
-			} else {
+			} else if (!loaded) {
 				fetchError =
 					e instanceof ApiError ? e.message : 'Connection lost. Please check your connection and retry.';
 			}
+			// Refetch failure with a loaded editor: keep the current view —
+			// the deploy/rollback error banner already explains what failed.
 		}
 	};
 
