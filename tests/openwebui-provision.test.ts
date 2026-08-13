@@ -2,8 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { provisionFilter } from "../src/openwebui-provision.ts";
 
-test("provisionFilter() signs in, creates API key, creates function, and sets valves", async () => {
+test("provisionFilter() signs in, creates API key, creates function, toggles it, and sets valves", async () => {
   const calls: string[] = [];
+  let toggleActiveCalled = false;
+  let toggleGlobalCalled = false;
   const fakeFetch: typeof fetch = async (url, init) => {
     const u = String(url);
     calls.push(u);
@@ -11,7 +13,7 @@ test("provisionFilter() signs in, creates API key, creates function, and sets va
       return new Response(JSON.stringify({ token: "tok-123", role: "admin" }), { status: 200 });
     }
     if (u.endsWith("/api/v1/auths/api_key")) {
-      return new Response(JSON.stringify({ key: "api-key-xyz" }), { status: 200 });
+      return new Response(JSON.stringify({ api_key: "api-key-xyz" }), { status: 200 });
     }
     if (u.endsWith("/api/v1/functions/id/made_routing")) {
       // GET check: function doesn't exist yet
@@ -23,7 +25,21 @@ test("provisionFilter() signs in, creates API key, creates function, and sets va
       assert.equal(body.type, "filter");
       assert.match(body.content, /class Filter/);
       assert.equal((init?.headers as Record<string, string>)["authorization"], "Bearer tok-123");
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      // Return function with is_active=false, is_global=false (defaults)
+      return new Response(
+        JSON.stringify({ id: "made_routing", is_active: false, is_global: false }),
+        { status: 200 }
+      );
+    }
+    if (u.includes("/id/made_routing/toggle")) {
+      if (u.includes("/toggle/global")) {
+        toggleGlobalCalled = true;
+      } else {
+        toggleActiveCalled = true;
+      }
+      return new Response(JSON.stringify({ id: "made_routing", is_active: true, is_global: true }), {
+        status: 200,
+      });
     }
     if (u.endsWith("/valves/update")) {
       const body = JSON.parse(String(init?.body));
@@ -50,11 +66,14 @@ test("provisionFilter() signs in, creates API key, creates function, and sets va
   assert.ok(calls.some((c) => c.endsWith("/api/v1/auths/signin")));
   assert.ok(calls.some((c) => c.endsWith("/api/v1/auths/api_key")));
   assert.ok(calls.some((c) => c.endsWith("/api/v1/functions/create")));
+  assert.equal(toggleActiveCalled, true, "toggle is_active should have been called");
+  assert.equal(toggleGlobalCalled, true, "toggle is_global should have been called");
   assert.ok(calls.some((c) => c.endsWith("/valves/update")));
 });
 
-test("provisionFilter() updates function if it already exists", async () => {
+test("provisionFilter() updates function if it already exists, and calls toggles if needed", async () => {
   const calls: string[] = [];
+  let toggleActiveCalled = false;
   const fakeFetch: typeof fetch = async (url, init) => {
     const u = String(url);
     calls.push(u);
@@ -62,7 +81,7 @@ test("provisionFilter() updates function if it already exists", async () => {
       return new Response(JSON.stringify({ token: "tok-123", role: "admin" }), { status: 200 });
     }
     if (u.endsWith("/api/v1/auths/api_key")) {
-      return new Response(JSON.stringify({ key: "api-key-xyz" }), { status: 200 });
+      return new Response(JSON.stringify({ api_key: "api-key-xyz" }), { status: 200 });
     }
     if (u.endsWith("/api/v1/functions/id/made_routing")) {
       if (init?.method === "GET") {
@@ -75,7 +94,15 @@ test("provisionFilter() updates function if it already exists", async () => {
       assert.equal(body.id, "made_routing");
       assert.equal(body.type, "filter");
       assert.match(body.content, /class Filter/);
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      // Return function already active and global
+      return new Response(
+        JSON.stringify({ id: "made_routing", is_active: true, is_global: true }),
+        { status: 200 }
+      );
+    }
+    if (u.includes("/toggle") && u.includes("/id/made_routing/toggle")) {
+      toggleActiveCalled = true;
+      throw new Error("toggle should not be called when function is already active/global");
     }
     if (u.endsWith("/valves/update")) {
       const body = JSON.parse(String(init?.body));
@@ -99,6 +126,7 @@ test("provisionFilter() updates function if it already exists", async () => {
   assert.ok(calls.some((c) => c.endsWith("/id/made_routing/update")));
   assert.ok(calls.some((c) => c.endsWith("/valves/update")));
   assert.ok(!calls.some((c) => c.endsWith("/api/v1/functions/create")));
+  assert.equal(toggleActiveCalled, false, "toggle should not be called when already active/global");
 });
 
 test("provisionFilter() returns ok:false with an error message when sign-in fails", async () => {
@@ -121,6 +149,8 @@ test("provisionFilter() is idempotent: running it twice produces the same end st
   let apiKeyCalls = 0;
   let createCalls = 0;
   let updateCalls = 0;
+  let toggleActiveCalls = 0;
+  let toggleGlobalCalls = 0;
   const fakeFetch: typeof fetch = async (url, init) => {
     const u = String(url);
     if (u.endsWith("/api/v1/auths/signin")) {
@@ -128,7 +158,7 @@ test("provisionFilter() is idempotent: running it twice produces the same end st
     }
     if (u.endsWith("/api/v1/auths/api_key")) {
       apiKeyCalls++;
-      return new Response(JSON.stringify({ key: "api-key-xyz" }), { status: 200 });
+      return new Response(JSON.stringify({ api_key: "api-key-xyz" }), { status: 200 });
     }
     if (u.endsWith("/api/v1/functions/id/made_routing")) {
       if (init?.method === "GET") {
@@ -140,11 +170,29 @@ test("provisionFilter() is idempotent: running it twice produces the same end st
     }
     if (u.endsWith("/api/v1/functions/create")) {
       createCalls++;
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      // Return function with is_active=false, is_global=false (defaults)
+      return new Response(
+        JSON.stringify({ id: "made_routing", is_active: false, is_global: false }),
+        { status: 200 }
+      );
     }
     if (u.endsWith("/id/made_routing/update")) {
       updateCalls++;
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      // Return function already active and global (simulating idempotent behavior)
+      return new Response(
+        JSON.stringify({ id: "made_routing", is_active: true, is_global: true }),
+        { status: 200 }
+      );
+    }
+    if (u.includes("/toggle") && u.includes("/id/made_routing/toggle")) {
+      if (u.includes("/toggle/global")) {
+        toggleGlobalCalls++;
+      } else {
+        toggleActiveCalls++;
+      }
+      return new Response(JSON.stringify({ id: "made_routing", is_active: true, is_global: true }), {
+        status: 200,
+      });
     }
     if (u.endsWith("/valves/update")) {
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
@@ -165,8 +213,11 @@ test("provisionFilter() is idempotent: running it twice produces the same end st
   await provisionFilter(deps);
   await provisionFilter(deps);
 
-  // First run: create + api key. Second run: update + api key
+  // First run: create (inactive/global=false) + toggles. Second run: update (already active/global) + no toggles
   assert.equal(createCalls, 1);
   assert.equal(updateCalls, 1);
   assert.equal(apiKeyCalls, 2);
+  // First run should toggle both; second run should not (already in desired state)
+  assert.equal(toggleActiveCalls, 1);
+  assert.equal(toggleGlobalCalls, 1);
 });

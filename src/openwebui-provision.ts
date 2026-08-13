@@ -39,9 +39,22 @@ export async function provisionFilter(deps: ProvisionDeps): Promise<ProvisionRes
   });
   let openwebuiToken: string;
   if (apiKeyRes.ok) {
-    const apiKeyBody = (await apiKeyRes.json()) as { key?: string };
-    openwebuiToken = apiKeyBody.key || adminToken;
+    const apiKeyBody = (await apiKeyRes.json()) as { api_key?: string };
+    if (apiKeyBody.api_key) {
+      openwebuiToken = apiKeyBody.api_key;
+    } else {
+      console.warn(
+        "API key creation succeeded but returned empty api_key field. Falling back to admin JWT. " +
+          "Provisioning should be re-run before the JWT expires (4 weeks)."
+      );
+      openwebuiToken = adminToken;
+    }
   } else {
+    console.warn(
+      `API key creation failed with status ${apiKeyRes.status}. Falling back to admin JWT. ` +
+        "Provisioning should be re-run before the JWT expires (4 weeks). " +
+        "Note: ENABLE_API_KEYS must be set to true in Open WebUI config."
+    );
     // Fall back to the admin token if API key creation fails
     openwebuiToken = adminToken;
   }
@@ -97,6 +110,48 @@ export async function provisionFilter(deps: ProvisionDeps): Promise<ProvisionRes
       ok: false,
       error: body.detail ?? `function create/update failed with status ${createOrUpdateRes.status}`,
     };
+  }
+
+  // Parse the create/update response to check is_active and is_global state
+  const functionBody = (await createOrUpdateRes.json()) as {
+    is_active?: boolean;
+    is_global?: boolean;
+  };
+
+  // Toggle is_active if the function is not active
+  if (functionBody.is_active === false) {
+    const toggleActiveRes = await fetchFn(
+      `${deps.openwebuiUrl}/api/v1/functions/id/made_routing/toggle`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${adminToken}` },
+      }
+    );
+    if (!toggleActiveRes.ok) {
+      const body = (await toggleActiveRes.json().catch(() => ({}))) as { detail?: string };
+      return {
+        ok: false,
+        error: body.detail ?? `toggle is_active failed with status ${toggleActiveRes.status}`,
+      };
+    }
+  }
+
+  // Toggle is_global if the function is not global
+  if (functionBody.is_global === false) {
+    const toggleGlobalRes = await fetchFn(
+      `${deps.openwebuiUrl}/api/v1/functions/id/made_routing/toggle/global`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${adminToken}` },
+      }
+    );
+    if (!toggleGlobalRes.ok) {
+      const body = (await toggleGlobalRes.json().catch(() => ({}))) as { detail?: string };
+      return {
+        ok: false,
+        error: body.detail ?? `toggle is_global failed with status ${toggleGlobalRes.status}`,
+      };
+    }
   }
 
   // Set the valves (configuration) for the Filter
