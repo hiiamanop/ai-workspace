@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import uuid
@@ -126,9 +127,17 @@ def deploy_policy(request: PolicyDeployRequest) -> dict:
     if not POLICY_ID_RE.match(request.policy_id) or request.policy_id.endswith("_test"):
         raise HTTPException(status_code=400, detail=f"invalid policy_id '{request.policy_id}'")
 
-    # Validate syntax with OPA before touching the policies directory
+    # Validate with OPA before touching the policies directory. The new file
+    # must be checked together with the EXISTING policy set — an isolated
+    # check can't see cross-file conflicts (e.g. a second `default allow`
+    # next to base.rego breaks every /decide call; the C1 review caught this).
+    hard_dir = POLICIES_ROOT / "hard"
     with tempfile.TemporaryDirectory() as tmp:
         Path(tmp, f"{request.policy_id}.rego").write_text(request.rego_content)
+        if hard_dir.exists():
+            for existing in hard_dir.glob("*.rego"):
+                if existing.name != f"{request.policy_id}.rego":
+                    shutil.copy2(existing, Path(tmp, existing.name))
         try:
             proc = subprocess.run(
                 ["opa", "check", "--format", "json", tmp],
@@ -149,7 +158,6 @@ def deploy_policy(request: PolicyDeployRequest) -> dict:
                 msg = proc.stderr.strip() or proc.stdout.strip()
             raise HTTPException(status_code=400, detail=f"rego invalid: {msg}")
 
-    hard_dir = POLICIES_ROOT / "hard"
     hard_dir.mkdir(parents=True, exist_ok=True)
     target = hard_dir / f"{request.policy_id}.rego"
     tmp_target = target.with_suffix(".rego.tmp")

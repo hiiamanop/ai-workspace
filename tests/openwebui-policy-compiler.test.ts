@@ -4,9 +4,10 @@ import { CompileError, compilePolicy } from "../src/openwebui-policy-compiler.ts
 import type { ChatMessage, CompletionResult } from "../src/types.ts";
 
 const MARKDOWN = "Enforce cost limit of $0.10 per request.";
+// Deny-only: MADE's base.rego owns `default allow` — a second default
+// breaks every /decide call (C1 review's blocking finding).
 const GOOD_REGO = [
   "package made.hard",
-  'default allow = true',
   'deny[msg] { input.candidate.cost_per_1k_tokens > 0.1 }',
 ].join("\n");
 
@@ -38,10 +39,15 @@ test("strips rego code fences the model adds anyway", async () => {
 });
 
 test("warns when the compiled policy has no deny[] rules", async () => {
-  const { complete } = stubComplete("package made.hard\ndefault allow = true");
+  const { complete } = stubComplete("package made.hard\nx := 1");
   const out = await compilePolicy(MARKDOWN, { complete });
   assert.ok(out.warnings!.length > 0);
   assert.match(out.warnings![0], /deny/);
+});
+
+test("rejects output defining default allow (base.rego owns it; would break MADE)", async () => {
+  const { complete } = stubComplete("package made.hard\ndefault allow = true\ndeny[msg] { true }");
+  await assert.rejects(() => compilePolicy(MARKDOWN, { complete }), CompileError);
 });
 
 test("rejects empty markdown", async () => {
