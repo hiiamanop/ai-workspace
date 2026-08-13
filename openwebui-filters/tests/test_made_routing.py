@@ -143,3 +143,52 @@ def test_inlet_falls_back_to_cheapest_qualifying_tier_when_made_unreachable():
             assert result["model"] == "deepseek-v4-flash"  # cheapest of the two tiers
 
     asyncio.run(run())
+
+
+def test_inlet_returns_unchanged_body_when_no_scored_candidates_exist():
+    """Regression test: brand with ≥2 non-target entries where none carry cost_per_1k_tokens.
+
+    When cheapest_qualifying has no scored candidates to fall back to, inlet() must
+    return body unchanged (with original model value), never raise an exception.
+    This exercises the exact scenario from the Important finding.
+    """
+    async def run():
+        # Two models with the same brand but neither has cost_per_1k_tokens
+        unscored_models = [
+            {
+                "id": "unscored-model-1",
+                "meta": {"made_scores": {"brand": "unscored-brand"}},
+            },
+            {
+                "id": "unscored-model-2",
+                "meta": {"made_scores": {"brand": "unscored-brand"}},
+            },
+        ]
+
+        with requests_mock.Mocker() as m:
+            m.get(
+                "http://open-webui:8080/api/v1/models/list",
+                json={"data": unscored_models},
+            )
+            m.post(
+                "http://open-webui:8080/api/chat/completions",
+                json={"choices": [{"message": {"content": "medium"}}]},
+            )
+            # MADE request would fail; trigger fallback path
+            m.post("http://made:8000/decide", exc=Exception("connection refused"))
+
+            f = make_filter()
+            body = {
+                "model": "unscored-brand",
+                "messages": [{"role": "user", "content": "hello"}],
+            }
+            original_model = body["model"]
+
+            # This must not raise ValueError from min() on empty pool.
+            result = await f.inlet(body, __user__={"id": "u1"})
+
+            # body["model"] should remain unchanged since no fallback was found
+            assert result["model"] == original_model
+            assert result is body  # returned the same dict
+
+    asyncio.run(run())

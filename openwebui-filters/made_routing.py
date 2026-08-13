@@ -69,7 +69,9 @@ class Filter:
         except Exception:
             pass
 
-        body["model"] = _cheapest_qualifying(brand_candidates)
+        fallback_model = _cheapest_qualifying(brand_candidates)
+        if fallback_model is not None:
+            body["model"] = fallback_model
         return body
 
     def _list_models(self) -> list[dict]:
@@ -156,12 +158,14 @@ def _brand_of(model: dict) -> str | None:
     return model.get("meta", {}).get("made_scores", {}).get("brand")
 
 
-def _cheapest_qualifying(brand_candidates: list[dict], min_quality: float = 0.4) -> str:
+def _cheapest_qualifying(brand_candidates: list[dict], min_quality: float = 0.4) -> str | None:
     scored = [
         (m["id"], m.get("meta", {}).get("made_scores", {}))
         for m in brand_candidates
         if m.get("meta", {}).get("made_scores", {}).get("cost_per_1k_tokens") is not None
     ]
+    if not scored:
+        return None  # no scored candidates to fall back to
     qualifying = [(mid, s) for mid, s in scored if s.get("quality", 0) >= min_quality]
     pool = qualifying if qualifying else scored
     return min(pool, key=lambda pair: pair[1].get("cost_per_1k_tokens", 999))[0]
