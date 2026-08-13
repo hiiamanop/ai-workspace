@@ -88,44 +88,24 @@ export async function checkAndSyncVisibility(deps: HealthCheckDeps): Promise<Hea
   let changed = false;
   for (const brandModels of byBrand.values()) {
     for (const m of brandModels) {
-      const isBrand = isBrandEntry(m);
+      // Only process brand entries; skip tiers entirely (they stay is_active=true with permanent public read grant)
+      if (!isBrandEntry(m)) {
+        continue;
+      }
 
-      if (isBrand) {
-        // Brand entry: toggle is_active based on MADE health
-        const wantActive = madeHealthy;
-        if (m.is_active !== wantActive) {
-          changed = true;
-          const toggleRes = await fetchFn(
-            `${deps.openwebuiUrl}/api/v1/models/model/toggle?id=${encodeURIComponent(m.id)}`,
-            {
-              method: "POST",
-              headers: { authorization: `Bearer ${adminToken}` },
-            }
-          );
-          if (!toggleRes.ok) {
-            errors.push(`toggle ${m.id} failed: status ${toggleRes.status}`);
+      // Brand entry: toggle is_active based on MADE health
+      const wantActive = madeHealthy;
+      if (m.is_active !== wantActive) {
+        changed = true;
+        const toggleRes = await fetchFn(
+          `${deps.openwebuiUrl}/api/v1/models/model/toggle?id=${encodeURIComponent(m.id)}`,
+          {
+            method: "POST",
+            headers: { authorization: `Bearer ${adminToken}` },
           }
-        }
-      } else {
-        // Tier entry: use access grants for visibility control
-        const wantPublicGrant = !madeHealthy; // reveal tiers when MADE is unhealthy
-        // For now, track desired state in memory (ideally we'd read from the /list response)
-        const grants = wantPublicGrant
-          ? [{ principal_type: "anyone", principal_id: "*", permission: "read" }]
-          : [];
-
-        const grantRes = await fetchFn(`${deps.openwebuiUrl}/api/v1/models/model/access/update`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${adminToken}`,
-          },
-          body: JSON.stringify({ id: m.id, access_grants: grants }),
-        });
-        if (!grantRes.ok) {
-          errors.push(`access/update ${m.id} failed: status ${grantRes.status}`);
-        } else {
-          changed = true;
+        );
+        if (!toggleRes.ok) {
+          errors.push(`toggle ${m.id} failed: status ${toggleRes.status}`);
         }
       }
     }
