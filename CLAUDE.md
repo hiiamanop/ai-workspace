@@ -96,6 +96,8 @@ Open WebUI is reachable at `http://localhost:3001`; `WEBUI_SECRET_KEY` must be s
   - `latency`: raw milliseconds (or seconds), lower is better (e.g., 10, 100)
   - `business_risk`: 0-1 scale, lower is better (0=no risk)
 
+**Policy authoring UI (C2, admin-only):** `open-webui/src/routes/(app)/workspace/policies/` — list, `[id]` editor (split-pane Markdown/Rego with live compile + autosave), and `new`. Backed by C1's `/api/v1/policies*` endpoints. Gotchas when touching it: timestamps are epoch-ns BigInts (format via `$lib/utils/policies.ts::formatEpochNs`); C1's compile endpoint compiles the policy's **saved** markdown, so the editor always saves before compiling; policy rename is not supported by the backend (PUT only takes `markdown_content`). Admin-only tab in `(app)/workspace/+layout.svelte`; non-admins are redirected to `/`.
+
 GenOffice (`genoffice/`) is its own npm workspace root, vendored separately — `cd genoffice && npm install` before touching anything under it. Its own commands: `npm run typecheck` / `npm run test -- --run` (vitest) scoped per-app, e.g. `cd genoffice/apps/docs && npm run typecheck`.
 
 ## Architecture
