@@ -1,8 +1,10 @@
+import json
 import logging
 import os
 import re
 import time
 from typing import Optional
+from fastapi.responses import Response
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -330,7 +332,12 @@ async def deploy_policy_by_id(
             before={'status': 'draft'}, after={'status': 'active'},
             made_response={'outcome': 'ok'}, db=db,
         )
-        return {'status': 'active', 'deployed_at': now, 'message': 'Policy deployed successfully'}
+        return Response(
+            content=('{"status":"active","deployed_at":' + str(now) + ',"message":"Policy deployed successfully"}'),
+            status_code=200,
+            media_type="application/json",
+            headers={"no-transform": ""},
+        )
 
     # MADE rejected the new Rego
     if policy.active_rego:
@@ -346,14 +353,17 @@ async def deploy_policy_by_id(
             db=db,
         )
         if rollback_outcome == 'ok':
-            return JSONResponse(
+            content_dict = {
+                'status': 'draft',
+                'error': f'MADE rejected policy: {made_error}',
+                'rolled_back': True,
+                'message': 'Deployment failed. Rolled back to previous version. Fix the Rego and retry.',
+            }
+            return Response(
+                content=json.dumps(content_dict),
                 status_code=400,
-                content={
-                    'status': 'draft',
-                    'error': f'MADE rejected policy: {made_error}',
-                    'rolled_back': True,
-                    'message': 'Deployment failed. Rolled back to previous version. Fix the Rego and retry.',
-                },
+                media_type="application/json",
+                headers={"no-transform": ""},
             )
         return policy_error(
             400,
@@ -368,14 +378,17 @@ async def deploy_policy_by_id(
         before={'status': 'draft'}, after={'status': 'draft'},
         made_response={'outcome': 'error', 'error': made_error, 'rolled_back': False}, db=db,
     )
-    return JSONResponse(
+    content_dict = {
+        'status': 'draft',
+        'error': f'MADE rejected policy: {made_error}',
+        'rolled_back': False,
+        'message': 'Deployment failed. Fix the Rego and retry.',
+    }
+    return Response(
+        content=json.dumps(content_dict),
         status_code=400,
-        content={
-            'status': 'draft',
-            'error': f'MADE rejected policy: {made_error}',
-            'rolled_back': False,
-            'message': 'Deployment failed. Fix the Rego and retry.',
-        },
+        media_type="application/json",
+        headers={"no-transform": ""},
     )
 
 

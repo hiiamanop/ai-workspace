@@ -27,58 +27,71 @@ export interface ProvisionToolsResult {
   actions: { id: string; action: "created" | "updated" | "up-to-date" }[];
 }
 
+// Class-based Tools format: this fork of Open WebUI's loader
+// (load_tool_module_by_id) only accepts modules with a Tools class — the
+// module-level function format raises "No Tools class found in the module".
 const webSearchSource = `from pydantic import BaseModel, Field
 import requests
 
-class Valves(BaseModel):
-    backend_url: str = Field(
-        default="http://app:3000",
-        description="Base URL of the ai-workspace backend (http://app:3000 inside docker, http://localhost:3000 for host-dev)",
-    )
 
-def web_search(query: str, language: str = "en") -> dict:
-    """Search the web using SearXNG. Returns structured results with titles, URLs, and snippets."""
-    try:
-        response = requests.post(
-            f"{valves.backend_url}/api/web-search",
-            json={"query": query, "language": language},
-            timeout=10,
+class Tools:
+    class Valves(BaseModel):
+        backend_url: str = Field(
+            default="http://app:3000",
+            description="Base URL of the ai-workspace backend (http://app:3000 inside docker, http://localhost:3000 for host-dev)",
         )
-    except requests.RequestException as exc:
-        return {"status": "error", "error": f"Search failed: {exc}"}
-    if response.status_code == 200:
-        results = response.json()
-        return {
-            "status": "success",
-            "results": results.get("results", []),
-            "count": len(results.get("results", [])),
-        }
-    return {"status": "error", "error": f"Search failed: {response.status_code}"}
+
+    def __init__(self):
+        self.valves = self.Valves()
+
+    def web_search(self, query: str, language: str = "en") -> dict:
+        """Search the web using SearXNG. Returns structured results with titles, URLs, and snippets."""
+        try:
+            response = requests.post(
+                f"{self.valves.backend_url}/api/web-search",
+                json={"query": query, "language": language},
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            return {"status": "error", "error": f"Search failed: {exc}"}
+        if response.status_code == 200:
+            results = response.json()
+            return {
+                "status": "success",
+                "results": results.get("results", []),
+                "count": len(results.get("results", [])),
+            }
+        return {"status": "error", "error": f"Search failed: {response.status_code}"}
 `;
 
 const scrapeSource = `from pydantic import BaseModel, Field
 import requests
 
-class Valves(BaseModel):
-    backend_url: str = Field(
-        default="http://app:3000",
-        description="Base URL of the ai-workspace backend (http://app:3000 inside docker, http://localhost:3000 for host-dev)",
-    )
 
-def scrape(url: str) -> dict:
-    """Scrape content from a URL. Returns markdown-formatted text."""
-    try:
-        response = requests.post(
-            f"{valves.backend_url}/api/scrape",
-            json={"url": url},
-            timeout=10,
+class Tools:
+    class Valves(BaseModel):
+        backend_url: str = Field(
+            default="http://app:3000",
+            description="Base URL of the ai-workspace backend (http://app:3000 inside docker, http://localhost:3000 for host-dev)",
         )
-    except requests.RequestException as exc:
-        return {"status": "error", "error": f"Scrape failed: {exc}"}
-    if response.status_code == 200:
-        data = response.json()
-        return {"status": "success", "content": data.get("content", ""), "url": url}
-    return {"status": "error", "error": f"Scrape failed: {response.status_code}"}
+
+    def __init__(self):
+        self.valves = self.Valves()
+
+    def scrape(self, url: str) -> dict:
+        """Scrape content from a URL. Returns markdown-formatted text."""
+        try:
+            response = requests.post(
+                f"{self.valves.backend_url}/api/scrape",
+                json={"url": url},
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            return {"status": "error", "error": f"Scrape failed: {exc}"}
+        if response.status_code == 200:
+            data = response.json()
+            return {"status": "success", "content": data.get("content", ""), "url": url}
+        return {"status": "error", "error": f"Scrape failed: {response.status_code}"}
 `;
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
