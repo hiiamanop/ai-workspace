@@ -69,7 +69,7 @@ export async function compilePolicy(
     );
   }
 
-  const rego = extractRego(raw);
+  let rego = extractRego(raw);
   if (!rego.includes("package made.hard")) {
     throw new CompileError("LLM output is not valid Rego for MADE: missing 'package made.hard'");
   }
@@ -79,6 +79,14 @@ export async function compilePolicy(
     throw new CompileError(
       "LLM output defines 'default allow' — MADE's base.rego owns it; emit only deny[reason] rules"
     );
+  }
+  // MADE's validator is OPA v0.67. `in`, `every`, `contains`, `if` are Rego v0
+  // *future* keywords — used without `import future.keywords` they fail to
+  // parse (the `rego_parse_error: unexpected identifier token` hit live on
+  // deploy when the model emitted `x in [...]`). Inject the aggregate import
+  // so whatever future keyword free-form LLM output happens to use parses.
+  if (!rego.includes("future.keywords")) {
+    rego = rego.replace(/^(package made\.hard[^\n]*)/, "$1\nimport future.keywords");
   }
 
   const warnings: string[] = [];

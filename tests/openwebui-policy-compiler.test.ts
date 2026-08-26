@@ -5,6 +5,7 @@ import type { ChatMessage, CompletionResult } from "../src/types.ts";
 
 const VALID_REGO = [
   "package made.hard",
+  "import future.keywords",
   "",
   'deny[msg] {',
   "  input.candidate.cost_per_1k_tokens > 0.10",
@@ -72,6 +73,15 @@ test("throws CompileError when the model output defines default allow", async ()
 test("warns when the compiled policy defines no deny[] rules", async () => {
   const { complete } = stubComplete("package made.hard\n\nallow { true }");
   const out = await compilePolicy("a policy that allows everything", { complete });
-  assert.equal(out.rego, "package made.hard\n\nallow { true }");
+  assert.equal(out.rego, "package made.hard\nimport future.keywords\n\nallow { true }");
   assert.match(out.warnings.join(" "), /no deny\[\]/);
+});
+
+test("injects import future.keywords so rego using the in operator parses under MADE's OPA v0.67", async () => {
+  const { complete } = stubComplete(
+    'package made.hard\n\ndeny[msg] {\n  input.task.data_classification in ["confidential", "restricted"]\n  msg := "no confidential leaks"\n}'
+  );
+  const out = await compilePolicy("deny confidential or restricted data", { complete });
+  assert.ok(out.rego.startsWith("package made.hard\nimport future.keywords\n"));
+  assert.ok(out.rego.includes('in ["confidential", "restricted"]'));
 });

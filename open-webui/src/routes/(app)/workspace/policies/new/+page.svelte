@@ -38,7 +38,7 @@
 	};
 </script>
 
-<div class="flex h-full w-full flex-col gap-4 px-1.5 py-4">
+<div class="flex h-full w-full flex-col gap-4 overflow-y-auto px-1.5 py-4">
 	<div class="flex flex-wrap items-center justify-between gap-2">
 		<h1 class="text-xl font-semibold text-gray-900 dark:text-gray-100">New Policy</h1>
 		<button
@@ -76,11 +76,11 @@
 		/>
 	</div>
 
-	<div class="flex min-h-0 flex-1 flex-col gap-2">
+	<div class="flex min-h-64 flex-1 flex-col gap-2">
 		<label class="text-sm font-medium text-gray-700 dark:text-gray-300" for="policy-markdown">Markdown</label>
 		<textarea
 			id="policy-markdown"
-			class="h-full min-h-64 w-full resize-none rounded-lg border border-gray-200 bg-white p-3 font-mono text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-gray-500"
+			class="min-h-64 flex-1 w-full resize-none rounded-lg border border-gray-200 bg-white p-3 font-mono text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-gray-500"
 			placeholder={'# Policy\n\nIF candidate.cost_per_1k_tokens > 0.10\nTHEN deny "Over budget"'}
 			bind:value={markdown}
 		></textarea>
