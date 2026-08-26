@@ -131,3 +131,51 @@ def test_decide_accepts_complexity_field(tmp_path, monkeypatch):
         ],
     })
     assert response.status_code == 200
+
+
+def test_decide_complexity_actually_changes_the_selected_candidate(tmp_path, monkeypatch):
+    """Regression test: task.complexity was accepted by the request schema but
+    never passed into core.decision.engine.Task, so it silently had no effect
+    on manifest selection (always fell back to epm.yaml's default weights).
+    This proves complexity="high" actually switches to epm-high-complexity.yaml
+    (quality weighted 0.6 vs 0.4) by flipping which candidate wins.
+    """
+    client = _client(tmp_path, monkeypatch)
+    candidates = [
+        {"id": "cheap-low-quality", "vendor": "v", "kind": "model", "cost_per_1k_tokens": 0.1,
+         "scores": {"cost": 0.1, "quality": 0.3, "latency": 0.5, "business_risk": 0.5}},
+        {"id": "expensive-high-quality", "vendor": "v", "kind": "model", "cost_per_1k_tokens": 0.9,
+         "scores": {"cost": 0.9, "quality": 0.9, "latency": 0.5, "business_risk": 0.5}},
+    ]
+
+    low = client.post("/decide", json={
+        "task": {"type": "chat", "data_classification": "internal", "complexity": "low"},
+        "decision_kind": "model_selection",
+        "candidates": candidates,
+    })
+    high = client.post("/decide", json={
+        "task": {"type": "chat", "data_classification": "internal", "complexity": "high"},
+        "decision_kind": "model_selection",
+        "candidates": candidates,
+    })
+
+    assert low.json()["selected_candidate_id"] == "cheap-low-quality"
+    assert high.json()["selected_candidate_id"] == "expensive-high-quality"
+
+
+def test_decide_accepts_and_records_redacted_field(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    response = client.post("/decide", json={
+        "task": {
+            "type": "chat",
+            "data_classification": "confidential",
+            "redacted": True,
+        },
+        "decision_kind": "model_selection",
+        "candidates": [
+            {"id": "a", "vendor": "v", "kind": "model", "cost_per_1k_tokens": 0.001,
+             "scores": {"cost": 1.0, "quality": 0.5, "latency": 0.9, "business_risk": 0.9}},
+        ],
+    })
+    assert response.status_code == 200
+    assert response.json()["selected_candidate_id"] == "a"

@@ -1,78 +1,188 @@
-import { complete as deepseekComplete } from "./providers/deepseek-client.ts";
-import type { ChatMessage, CompletionResult } from "./types.ts";
-
 // Compile an admin-authored Markdown policy into OPA Rego for MADE.
 // MADE evaluates hard constraints via `opa eval --data <policies_dir> data.made.hard`,
 // so compiled output MUST use `package made.hard` — any other package silently
-// never runs (the exact class of bug the B' review caught).
-// MADE ships policies/hard/base.rego which OWNS `default allow`; compiled
-// policies MUST only add deny[reason] rules — a second `default allow` breaks
-// the whole hard-constraint engine (opa: multiple default rules for
-// data.made.hard.allow), which is what the C1 task review caught.
+// never runs. MADE ships policies/hard/base.rego which OWNS `default allow`;
+// compiled policies MUST only add deny[reason] rules — a second `default
+// allow` breaks the whole hard-constraint engine (opa: multiple default
+// rules for data.made.hard.allow).
+//
+// Deterministic, no LLM: the Markdown must contain one or more fixed-syntax
+// rule blocks —
+//
+//   IF <condition>
+//   [AND <condition>]...
+//   THEN deny "<message>"
+//
+// — everything else in the file (headings, prose, blank lines) is treated
+// as documentation and ignored. A condition is either a bare boolean field
+// reference (`task.redacted`) or `<field> <op> <value>` with op one of
+// `== != > < >= <= IN`; either form may be prefixed with `NOT`. This trades
+// the LLM compiler's flexibility (any prose) for zero hallucination risk —
+// a well-formed policy compiles the same way every time, and a malformed
+// one fails with a line-numbered syntax error instead of silently-wrong
+// Rego. See policy-drafter.ts for the chat assistant that now drafts in
+// this exact syntax.
 
 export class CompileError extends Error {}
 
-export const COMPILE_SYSTEM_PROMPT = `You are a Rego/OPA expert. Compile the following policy description to OPA Rego code for MADE's hard-constraint policy engine.
+const FIELD_RE = /^[a-zA-Z_][a-zA-Z0-9_.]*$/;
+const KNOWN_PREFIXES = ["task.", "candidate.", "org."];
+const KNOWN_EXACT = ["decision_kind"];
 
-Requirements:
-- The Rego MUST declare "package made.hard" as its first line.
-- Emit ONLY deny[reason] rules for every constraint violation — do NOT define
-  "allow" in any form (MADE's base.rego owns "default allow"; a second default
-  breaks the whole policy set).
-- The evaluation input has this shape:
-  input.decision_kind ("model_selection" | "tool_selection" | "human_approval")
-  input.task.type, input.task.data_classification, input.task.estimated_context_tokens
-  input.org.budget_remaining_usd, input.org.region
-  input.candidate.id, input.candidate.vendor, input.candidate.cost_per_1k_tokens, input.candidate.scores
-- If the policy description is too vague to express concrete constraints, reply with exactly: UNABLE_TO_COMPILE: <one sentence explaining what is missing>
-- Output ONLY the Rego code. No explanation, no markdown fences.`;
+const IF_RE = /^\s*IF\s+(.+)$/i;
+const AND_RE = /^\s*AND\s+(.+)$/i;
+const THEN_RE = /^\s*THEN\s+deny\s+"([^"]*)"\s*$/i;
+const CONDITION_WITH_OP_RE =
+  /^(NOT\s+)?([a-zA-Z_][a-zA-Z0-9_.]*)\s+(==|!=|>=|<=|>|<|IN)\s+(.+)$/i;
+const CONDITION_BARE_RE = /^(NOT\s+)?([a-zA-Z_][a-zA-Z0-9_.]*)\s*$/i;
 
-const COMPILE_MODEL = "deepseek-v4-flash";
-
-interface CompilerDeps {
-  complete: (model: string, messages: ChatMessage[]) => Promise<CompletionResult>;
+interface ParsedRule {
+  clauses: string[];
+  message: string;
 }
 
-export async function compilePolicy(
-  markdown: string,
-  deps: CompilerDeps = { complete: deepseekComplete }
-): Promise<{ rego: string; warnings?: string[] }> {
+export async function compilePolicy(markdown: string): Promise<{ rego: string; warnings: string[] }> {
   if (!markdown || markdown.trim() === "") {
     throw new CompileError("Markdown policy is empty");
   }
 
-  const messages: ChatMessage[] = [
-    { role: "system", content: COMPILE_SYSTEM_PROMPT },
-    { role: "user", content: markdown },
-  ];
+  const lines = markdown.split(/\r?\n/);
+  const rules: ParsedRule[] = [];
 
-  const result = await deps.complete(COMPILE_MODEL, messages);
-  const raw = (result.content ?? "").trim();
+  let current: ParsedRule | null = null;
+  let blockStartLine = -1;
 
-  if (raw.startsWith("UNABLE_TO_COMPILE:")) {
-    throw new CompileError(`Markdown is too vague for compilation: ${raw.slice("UNABLE_TO_COMPILE:".length).trim()}`);
+  for (let i = 0; i < lines.length; i++) {
+    const lineNo = i + 1;
+    const line = lines[i];
+
+    if (current === null) {
+      const ifMatch = line.match(IF_RE);
+      if (ifMatch) {
+        current = { clauses: [compileCondition(ifMatch[1], lineNo)], message: "" };
+        blockStartLine = lineNo;
+      }
+      // Anything else outside a block (headings, prose, blank lines) is documentation.
+      continue;
+    }
+
+    if (line.trim() === "") continue; // blank lines inside a block are just formatting
+
+    const andMatch = line.match(AND_RE);
+    if (andMatch) {
+      current.clauses.push(compileCondition(andMatch[1], lineNo));
+      continue;
+    }
+
+    const thenMatch = line.match(THEN_RE);
+    if (thenMatch) {
+      const message = thenMatch[1].trim();
+      if (!message) {
+        throw new CompileError(`Line ${lineNo}: "THEN deny" requires a non-empty message in quotes`);
+      }
+      current.message = message;
+      rules.push(current);
+      current = null;
+      continue;
+    }
+
+    throw new CompileError(
+      `Line ${lineNo}: expected "AND <condition>" or "THEN deny \"<message>\"", got: ${line.trim() || "(blank)"}`
+    );
   }
 
-  const rego = extractRego(raw);
-  if (!rego.includes("package made.hard")) {
-    throw new CompileError("LLM output is not valid Rego for MADE: missing 'package made.hard'");
-  }
-  // base.rego owns `default allow`; a compiled default would break every
-  // /decide call (opa: multiple default rules for data.made.hard.allow).
-  if (/\bdefault\s+allow\b/.test(rego)) {
-    throw new CompileError("LLM output defines 'default allow' — MADE's base.rego owns it; emit only deny[reason] rules");
+  if (current !== null) {
+    throw new CompileError(
+      `Line ${blockStartLine}: "IF" block was never closed with a "THEN deny \"<message>\"" line`
+    );
   }
 
-  const warnings: string[] = [];
-  if (!rego.includes("deny[")) {
-    warnings.push("Compiled policy defines no deny[] rules — it will not block anything");
+  if (rules.length === 0) {
+    throw new CompileError(
+      'No IF/THEN rules found. Expected syntax:\nIF <field> <op> <value>\nTHEN deny "<message>"'
+    );
   }
 
-  return { rego, warnings };
+  const rego = [
+    "package made.hard",
+    "",
+    ...rules.map(
+      (rule) =>
+        `deny[msg] {\n${rule.clauses.map((c) => `  ${c}`).join("\n")}\n  msg := ${JSON.stringify(rule.message)}\n}`
+    ),
+  ].join("\n\n");
+
+  return { rego, warnings: [] };
 }
 
-function extractRego(raw: string): string {
-  // Tolerate markdown fences the model adds despite instructions
-  const fenced = raw.match(/```(?:rego)?\s*\n([\s\S]*?)```/);
-  return fenced ? fenced[1].trim() : raw.trim();
+function compileCondition(raw: string, lineNo: number): string {
+  const text = raw.trim();
+
+  const withOp = text.match(CONDITION_WITH_OP_RE);
+  if (withOp) {
+    const [, notPrefix, field, op, rawValue] = withOp;
+    validateField(field, lineNo);
+    const opUpper = op.toUpperCase();
+    const clause =
+      opUpper === "IN"
+        ? `${compileInSet(rawValue, lineNo)}[input.${field}]`
+        : `input.${field} ${op} ${compileScalarValue(rawValue, lineNo)}`;
+    return notPrefix ? `not ${clause}` : clause;
+  }
+
+  const bare = text.match(CONDITION_BARE_RE);
+  if (bare) {
+    const [, notPrefix, field] = bare;
+    validateField(field, lineNo);
+    return notPrefix ? `not input.${field}` : `input.${field}`;
+  }
+
+  throw new CompileError(
+    `Line ${lineNo}: could not parse condition "${text}". Expected "<field>", "NOT <field>", or "<field> <op> <value>" (op one of == != > < >= <= IN)`
+  );
+}
+
+function validateField(field: string, lineNo: number): void {
+  if (!FIELD_RE.test(field)) {
+    throw new CompileError(`Line ${lineNo}: invalid field name "${field}"`);
+  }
+  const known = KNOWN_EXACT.includes(field) || KNOWN_PREFIXES.some((p) => field.startsWith(p));
+  if (!known) {
+    throw new CompileError(
+      `Line ${lineNo}: unknown field "${field}" — expected "decision_kind" or one of task.*, candidate.*, org.*`
+    );
+  }
+}
+
+function compileScalarValue(raw: string, lineNo: number): string {
+  const text = raw.trim();
+  if (/^"[^"]*"$/.test(text)) return text; // quoted string literal, keep as-is
+  if (/^-?\d+(\.\d+)?$/.test(text)) return text; // number
+  if (/^(true|false)$/.test(text)) return text; // boolean
+  throw new CompileError(
+    `Line ${lineNo}: invalid value "${text}" — expected a quoted string, a number, true/false, or IN [...]`
+  );
+}
+
+function compileInSet(raw: string, lineNo: number): string {
+  const text = raw.trim();
+  const bracketed = text.match(/^\[(.*)\]$/);
+  if (!bracketed) {
+    throw new CompileError(`Line ${lineNo}: IN requires a bracketed list, e.g. IN ["a", "b"], got: ${text}`);
+  }
+  let values: unknown;
+  try {
+    values = JSON.parse(text);
+  } catch {
+    throw new CompileError(`Line ${lineNo}: could not parse IN list "${text}" as JSON (use double-quoted strings)`);
+  }
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new CompileError(`Line ${lineNo}: IN list must be a non-empty array`);
+  }
+  for (const v of values) {
+    if (typeof v !== "string" && typeof v !== "number" && typeof v !== "boolean") {
+      throw new CompileError(`Line ${lineNo}: IN list values must be strings, numbers, or booleans`);
+    }
+  }
+  return `{${values.map((v) => JSON.stringify(v)).join(",")}}`;
 }

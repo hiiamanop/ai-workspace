@@ -109,6 +109,8 @@ def post_decide(request: DecideRequest) -> DecideResponse:
         type=request.task.type,
         data_classification=request.task.data_classification,
         estimated_context_tokens=request.task.estimated_context_tokens,
+        complexity=request.task.complexity,
+        redacted=request.task.redacted,
     )
     org = Org(budget_remaining_usd=request.org.budget_remaining_usd, region=request.org.region)
     candidates = [

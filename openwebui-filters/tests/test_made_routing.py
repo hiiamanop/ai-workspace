@@ -434,3 +434,75 @@ def test_classify_complexity_defaults_to_medium_when_made_unreachable():
             assert result == "medium"
 
     asyncio.run(run())
+
+
+def test_inlet_reads_privacy_marker_and_forwards_it_to_made():
+    async def run():
+        with aioresponses() as m:
+            m.get(
+                "http://open-webui:8080/api/v1/models/list?page=1",
+                payload={"items": [BRAND_MODEL] + TIER_MODELS, "total": 3},
+            )
+            m.post(
+                "http://made:8000/decide",
+                payload={
+                    "decision_id": "d1",
+                    "selected_candidate_id": "deepseek-v4-pro",
+                    "requires_human_approval": False,
+                    "ranking": [],
+                    "excluded": [],
+                    "technique_used": "topsis",
+                    "policy_version": "1",
+                },
+            )
+            f = make_filter()
+            body = {
+                "model": "deepseek",
+                "messages": [{"role": "user", "content": "hi"}],
+                "_privacy": {"data_classification": "confidential", "redacted": True},
+            }
+
+            await f.inlet(body, __user__={"id": "u1"})
+
+            decide_key = next(
+                key for key in m.requests if key[0] == "POST" and "made:8000" in str(key[1]) and "/decide" in str(key[1])
+            )
+            posted = m.requests[decide_key][0].kwargs["json"]
+            assert posted["task"]["data_classification"] == "confidential"
+            assert posted["task"]["redacted"] is True
+
+    asyncio.run(run())
+
+
+def test_inlet_defaults_to_internal_not_redacted_when_privacy_marker_absent():
+    async def run():
+        with aioresponses() as m:
+            m.get(
+                "http://open-webui:8080/api/v1/models/list?page=1",
+                payload={"items": [BRAND_MODEL] + TIER_MODELS, "total": 3},
+            )
+            m.post(
+                "http://made:8000/decide",
+                payload={
+                    "decision_id": "d1",
+                    "selected_candidate_id": "deepseek-v4-flash",
+                    "requires_human_approval": False,
+                    "ranking": [],
+                    "excluded": [],
+                    "technique_used": "topsis",
+                    "policy_version": "1",
+                },
+            )
+            f = make_filter()
+            body = {"model": "deepseek", "messages": [{"role": "user", "content": "hi"}]}
+
+            await f.inlet(body, __user__={"id": "u1"})
+
+            decide_key = next(
+                key for key in m.requests if key[0] == "POST" and "made:8000" in str(key[1]) and "/decide" in str(key[1])
+            )
+            posted = m.requests[decide_key][0].kwargs["json"]
+            assert posted["task"]["data_classification"] == "internal"
+            assert posted["task"]["redacted"] is False
+
+    asyncio.run(run())

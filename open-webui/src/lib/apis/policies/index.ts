@@ -7,6 +7,7 @@ import { WEBUI_API_BASE_URL } from '$lib/constants';
 //   PUT    /api/v1/policies/{id}         -> Policy (draft only, body {markdown_content})
 //   DELETE /api/v1/policies/{id}         -> 204 (draft only)
 //   POST   /api/v1/policies/{id}/compile -> {compiled_rego, warnings} | 400/503 {error, details?}
+//   POST   /api/v1/policies/draft        -> {content, draft_markdown} | 400/503 {error, details?} (body {messages})
 //   POST   /api/v1/policies/{id}/deploy  -> {status, deployed_at, message} | 400 {status,error,rolled_back,message} | 502 {error,details}
 //   POST   /api/v1/policies/{id}/rollback -> {status, message} | 400/502 {error, details?}
 //
@@ -46,6 +47,16 @@ export type PolicyListResponse = {
 export type CompileResponse = {
 	compiled_rego: string;
 	warnings: string[];
+};
+
+export type DraftChatMessage = {
+	role: 'user' | 'assistant';
+	content: string;
+};
+
+export type DraftResponse = {
+	content: string;
+	draft_markdown: string | null;
 };
 
 export type DeployResponse = {
@@ -142,6 +153,9 @@ export const updatePolicy = (token: string, id: string, markdown: string) =>
 
 export const compilePolicy = (token: string, id: string) =>
 	request<CompileResponse>(token, `/policies/${encodeURIComponent(id)}/compile`, 'POST');
+
+export const draftPolicy = (token: string, messages: DraftChatMessage[]) =>
+	request<DraftResponse>(token, '/policies/draft', 'POST', { messages });
 
 export const deployPolicy = (token: string, id: string) =>
 	request<DeployResponse>(token, `/policies/${encodeURIComponent(id)}/deploy`, 'POST');

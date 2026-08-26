@@ -74,6 +74,19 @@ function assertUrlAllowed(url: string): void {
   }
 }
 
+// ponytail: a full rendered page can be tens of thousands of tokens of
+// nav/footer/boilerplate dumped straight into the model's context. Cap it
+// rather than sending it raw; upgrade to real readability extraction only
+// if truncation turns out to cut off content models actually need.
+const MAX_SCRAPE_CHARS = 12_000;
+
+function truncateScrapeResult(text: string): string {
+  if (text.length <= MAX_SCRAPE_CHARS) {
+    return text;
+  }
+  return `${text.slice(0, MAX_SCRAPE_CHARS)}\n\n[... truncated, ${text.length - MAX_SCRAPE_CHARS} more characters omitted]`;
+}
+
 // Uses Scrapling's browser-rendered "fetch" tool (full page, not the raw
 // "get" tool) since our web_search tool already covers plain HTTP lookups.
 export async function callScrape(
@@ -83,7 +96,8 @@ export async function callScrape(
   assertUrlAllowed(url);
   const connection = await connect();
   try {
-    return await connection.callTool("fetch", { url });
+    const result = await connection.callTool("fetch", { url });
+    return truncateScrapeResult(result);
   } finally {
     await connection.close();
   }

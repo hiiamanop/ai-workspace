@@ -130,7 +130,12 @@ def run_scenario_for_baseline(
                 "cost_usd": 0.0, "quality_score": 0.0, "latency_ms": 0.0, "status": "failed"}
 
     if baseline == "made":
-        task = Task(type=scenario["task"]["type"], data_classification=scenario["task"]["data_classification"])
+        task = Task(
+            type=scenario["task"]["type"],
+            data_classification=scenario["task"]["data_classification"],
+            complexity=scenario["task"].get("complexity", "medium"),
+            redacted=scenario["task"].get("redacted", False),
+        )
         org = Org(budget_remaining_usd=scenario["org"]["budget_remaining_usd"], region=scenario["org"]["region"])
         result = decide(
             task=task, org=org, candidates=_make_decision_candidates(ok_infos), policies_dir=POLICIES_ROOT,

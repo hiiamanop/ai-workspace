@@ -12,6 +12,7 @@ import { remember, recall, type MemoryEntry } from "./memory-store.ts";
 import { startHealthMonitor } from "./openwebui-health-monitor.ts";
 import { startProvisioningReconciler } from "./openwebui-provisioning-reconciler.ts";
 import { compilePolicy, CompileError } from "./openwebui-policy-compiler.ts";
+import { draftPolicy } from "./policy-drafter.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST_DIR = path.join(__dirname, "..", "client", "dist");
@@ -356,6 +357,37 @@ export function createServer(
         } catch (err) {
           const status = err instanceof CompileError ? 400 : 500;
           res.writeHead(status, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: (err as Error).message }));
+        }
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/api/draft-policy") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const raw = Buffer.concat(chunks).toString("utf8");
+
+        let body: { messages?: unknown };
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid JSON body" }));
+          return;
+        }
+
+        if (!Array.isArray(body.messages) || body.messages.length === 0) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "messages field is required and must be non-empty" }));
+          return;
+        }
+
+        try {
+          const result = await draftPolicy(body.messages as ChatMessage[]);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (err) {
+          res.writeHead(500, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: (err as Error).message }));
         }
         return;

@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { user } from '$lib/stores';
 	import { ApiError, createPolicy } from '$lib/apis/policies';
+	import PolicyDraftChat from '$lib/components/workspace/Policies/PolicyDraftChat.svelte';
 
 	let name = 'Untitled Policy';
 	let markdown = '';
@@ -50,8 +51,10 @@
 	</div>
 
 	<p class="text-sm text-gray-500 dark:text-gray-400">
-		Name your policy and write its Markdown. After creation, the editor compiles it to Rego live —
-		you can deploy it to MADE once the first compile succeeds.
+		Name your policy and write its rules as <code>IF &lt;condition&gt; THEN deny "&lt;message&gt;"</code>
+		blocks (chain conditions with <code>AND</code>) — everything else is free-form documentation. Compiling
+		to Rego is a fixed, deterministic translation of that syntax, not an AI guess. Use "Draft with AI" below
+		if you'd rather describe the rule in plain language or upload a regulation document.
 	</p>
 
 	{#if error}
@@ -59,6 +62,8 @@
 			Error: {error}
 		</div>
 	{/if}
+
+	<PolicyDraftChat on:draft={(e) => (markdown = e.detail)} />
 
 	<div class="flex flex-col gap-2">
 		<label class="text-sm font-medium text-gray-700 dark:text-gray-300" for="policy-name">Name</label>
@@ -76,8 +81,7 @@
 		<textarea
 			id="policy-markdown"
 			class="h-full min-h-64 w-full resize-none rounded-lg border border-gray-200 bg-white p-3 font-mono text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-gray-500"
-			placeholder="# Policy
-Write your policy as Markdown here…"
+			placeholder={'# Policy\n\nIF candidate.cost_per_1k_tokens > 0.10\nTHEN deny "Over budget"'}
 			bind:value={markdown}
 		></textarea>
 	</div>

@@ -253,6 +253,52 @@ def test_compile_404(admin_client):
     assert response.status_code == 404
 
 
+def test_draft_calls_node_backend_and_returns_content(admin_client, patch_httpx):
+    patch_httpx([FakeResponse(200, {"content": "What vendor should this apply to?", "draftMarkdown": None})])
+
+    response = admin_client.post(
+        "/api/v1/policies/draft", json={"messages": [{"role": "user", "content": "Add a spend cap"}]}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["content"] == "What vendor should this apply to?"
+    assert body["draft_markdown"] is None
+
+
+def test_draft_returns_draft_markdown_when_ready(admin_client, patch_httpx):
+    patch_httpx([FakeResponse(200, {"content": "Here it is:\n```markdown\n# Policy\n```", "draftMarkdown": "# Policy"})])
+
+    response = admin_client.post(
+        "/api/v1/policies/draft", json={"messages": [{"role": "user", "content": "Cap DeepSeek at $0.10"}]}
+    )
+    assert response.status_code == 200
+    assert response.json()["draft_markdown"] == "# Policy"
+
+
+def test_draft_requires_non_empty_messages(admin_client):
+    response = admin_client.post("/api/v1/policies/draft", json={"messages": []})
+    assert response.status_code == 400
+
+
+def test_draft_node_backend_unreachable_503(admin_client):
+    class Unreachable(FakeAsyncClient):
+        async def post(self, url, json=None, **kwargs):
+            raise httpx.ConnectError("connection refused")
+
+    with patch_httpx_with(Unreachable)([]):
+        response = admin_client.post(
+            "/api/v1/policies/draft", json={"messages": [{"role": "user", "content": "hi"}]}
+        )
+    assert response.status_code == 503
+
+
+def test_draft_requires_admin(non_admin_client):
+    response = non_admin_client.post(
+        "/api/v1/policies/draft", json={"messages": [{"role": "user", "content": "hi"}]}
+    )
+    assert response.status_code == 403
+
+
 ############################
 # Deploy
 ############################

@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { mintApiKey } from "./openwebui-auth.ts";
 import { provisionFilter } from "./openwebui-provision.ts";
+import { provisionRedactionFilter } from "./openwebui-provision-redaction.ts";
 import { provisionTools } from "./openwebui-provision-tools.ts";
 
 // Runs the same provisioning src/openwebui-provision*.ts's CLI entry points do,
@@ -18,10 +19,14 @@ export interface ProvisioningReconcilerDeps {
   mintApiKeyFn?: typeof mintApiKey;
   provisionFilterFn?: typeof provisionFilter;
   provisionToolsFn?: typeof provisionTools;
+  provisionRedactionFilterFn?: typeof provisionRedactionFilter;
 }
 
 export async function reconcileOnce(deps: ProvisioningReconcilerDeps): Promise<boolean> {
   const filterSourcePath = fileURLToPath(new URL("../openwebui-filters/made_routing.py", import.meta.url));
+  const redactionFilterSourcePath = fileURLToPath(
+    new URL("../openwebui-filters/confidential_redaction.py", import.meta.url)
+  );
 
   // Open WebUI holds exactly one API key per user — mint once here and
   // share it with both provisioners. Letting each mint its own would have
@@ -60,7 +65,19 @@ export async function reconcileOnce(deps: ProvisioningReconcilerDeps): Promise<b
     console.error(`provisioning reconciler: Tools provisioning failed: ${toolsResult.error}`);
   }
 
-  return filterResult.ok && toolsResult.ok;
+  const redactionFilterResult = await (deps.provisionRedactionFilterFn ?? provisionRedactionFilter)({
+    openwebuiUrl: deps.openwebuiUrl,
+    madeUrl: deps.madeUrl,
+    adminEmail: deps.adminEmail,
+    adminPassword: deps.adminPassword,
+    filterSourcePath: redactionFilterSourcePath,
+    openwebuiToken,
+  });
+  if (!redactionFilterResult.ok) {
+    console.error(`provisioning reconciler: Redaction Filter provisioning failed: ${redactionFilterResult.error}`);
+  }
+
+  return filterResult.ok && toolsResult.ok && redactionFilterResult.ok;
 }
 
 export function startProvisioningReconciler(deps: ProvisioningReconcilerDeps): { stop(): void } {

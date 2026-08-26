@@ -8,6 +8,10 @@ class TaskIn(BaseModel):
     data_classification: Literal["public", "internal", "confidential", "restricted"]
     estimated_context_tokens: int = 0
     complexity: Literal["low", "medium", "high"] = "medium"
+    # Set by a caller that ran the text through POST /privacy/redact first.
+    # compliance.rego's external-vendor deny rule is the actual gate — this
+    # flag is how a caller satisfies it, not a courtesy field it could skip.
+    redacted: bool = False
 
 
 class OrgIn(BaseModel):

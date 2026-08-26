@@ -26,6 +26,7 @@
 		saveStatus
 	} from '$lib/stores/policies';
 	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
+	import PolicyDraftChat from '$lib/components/workspace/Policies/PolicyDraftChat.svelte';
 
 	const policyId = $page.params.id as string;
 
@@ -355,6 +356,17 @@
 			</div>
 		{/if}
 
+		{#if !locked}
+			<PolicyDraftChat
+				on:draft={(e) => {
+					markdown = e.detail;
+					dirty = true;
+					scheduleCompile();
+					scheduleSave();
+				}}
+			/>
+		{/if}
+
 		<!-- Split pane: stacks on mobile, side-by-side from md (768px) up -->
 		<div class="flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
 			<div class="flex min-h-0 flex-1 flex-col gap-1.5 md:w-1/2">
@@ -372,8 +384,7 @@
 				</div>
 				<textarea
 					class="h-full min-h-64 w-full resize-none rounded-lg border border-gray-200 bg-white p-3 font-mono text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-blue-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-blue-500"
-					placeholder="# Policy
-Write your policy in Markdown…"
+					placeholder={'# Policy\n\nIF candidate.cost_per_1k_tokens > 0.10\nTHEN deny "Over budget"'}
 					bind:value={markdown}
 					disabled={locked}
 					on:input={() => {

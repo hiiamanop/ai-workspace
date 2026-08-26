@@ -273,6 +273,49 @@ async def compile_policy_by_id(
 
 
 ############################
+# DraftPolicy (chat-assisted Markdown drafting, no policy_id yet)
+############################
+
+
+@router.post('/draft')
+async def draft_policy(
+    request: Request,
+    form_data: dict,
+    user=Depends(require_admin),
+):
+    """Proxies a chat turn to the Node backend's conversational policy drafter.
+
+    Unlike compile, this has no policy_id — drafting happens before a policy
+    is necessarily saved (e.g. from the "New Policy" page), so it's a plain
+    stateless proxy: the caller keeps the message history and resends it in
+    full each turn, same contract as any other chat completion endpoint.
+    """
+    messages = form_data.get('messages')
+    if not isinstance(messages, list) or not messages:
+        return policy_error(400, 'messages field is required and must be non-empty')
+
+    try:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            response = await client.post(
+                f'{POLICY_COMPILER_URL}/api/draft-policy',
+                json={'messages': messages},
+            )
+    except httpx.HTTPError as exc:
+        log.error('draft-policy: node backend unreachable: %s', exc)
+        return policy_error(503, 'Drafting service unreachable', 'The Node backend could not be reached')
+
+    if response.status_code != 200:
+        try:
+            detail = response.json().get('error')
+        except Exception:
+            detail = f'Drafting service returned status {response.status_code}'
+        return policy_error(400, detail or 'Drafting failed')
+
+    body = response.json()
+    return {'content': body.get('content', ''), 'draft_markdown': body.get('draftMarkdown')}
+
+
+############################
 # DeployPolicyById (to MADE, with rollback)
 ############################
 

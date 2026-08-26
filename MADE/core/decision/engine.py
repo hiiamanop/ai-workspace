@@ -15,6 +15,7 @@ class Task(BaseModel):
     data_classification: Literal["public", "internal", "confidential", "restricted"]
     estimated_context_tokens: int = 0
     complexity: Literal["low", "medium", "high"] = "medium"
+    redacted: bool = False
 
 
 class Org(BaseModel):

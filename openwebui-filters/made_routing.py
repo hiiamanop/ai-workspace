@@ -23,6 +23,13 @@ POST /classify (a small local HF model, not an LLM) to rate the latest
 user message low/medium/high before asking MADE which model tier to route
 to. Falls back to "medium" if MADE is unreachable.
 
+Data classification: reads `body["_privacy"]` — `{"data_classification":
+"confidential", "redacted": true}` if `confidential_redaction.py` (a
+separate Filter, priority -10 so it runs first) actually redacted
+something in this request. Absent (that Filter not installed, or nothing
+sensitive found) falls back to `"internal"`/not-redacted, same behavior as
+before that Filter existed.
+
 Tool selection: if the client sends `"auto"` in `body["tool_ids"]` (a
 sentinel the chat UI's "Auto (MADE decides)" toggle sends instead of real
 tool ids), this Filter fetches Open WebUI's tool registry
@@ -257,16 +264,24 @@ class Filter:
 
         estimated_tokens = sum(len(m.get("content", "")) for m in body.get("messages", [])) // 4
 
+        # confidential_redaction.py (if installed and it ran first — see its
+        # own Valves.priority) sets this when it actually redacted something.
+        # Absent means either that Filter isn't installed or found nothing
+        # sensitive — "internal"/not-redacted, same as before this existed.
+        privacy = body.get("_privacy", {})
+        data_classification = privacy.get("data_classification", "internal")
+        redacted = privacy.get("redacted", False)
+
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{self.valves.MADE_URL}/decide",
                 json={
                     "task": {
                         "type": "chat",
-                        # Hardcoded to "internal" — sensitivity classification is out of scope for this integration; only complexity is dynamically assessed
-                        "data_classification": "internal",
+                        "data_classification": data_classification,
                         "estimated_context_tokens": estimated_tokens,
                         "complexity": complexity,
+                        "redacted": redacted,
                     },
                     "decision_kind": "model_selection",
                     "candidates": candidates,

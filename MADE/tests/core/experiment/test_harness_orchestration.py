@@ -44,7 +44,15 @@ def test_run_scenario_for_baseline_always_cheap_picks_local_llama():
 
 
 def test_run_scenario_for_baseline_made_excludes_denied_candidate_for_confidential():
-    confidential_scenario = {**SCENARIO, "task": {"type": "summarization", "data_classification": "confidential"}}
+    # redacted: True — external_vendor.rego now denies deepseek too for
+    # unredacted confidential/restricted data (the whole point of the
+    # confidentiality pipeline); this test's actual concern is that
+    # compliance.rego still excludes the untrusted unverified-oss vendor
+    # even once the data is safe to send to deepseek.
+    confidential_scenario = {
+        **SCENARIO,
+        "task": {"type": "summarization", "data_classification": "confidential", "redacted": True},
+    }
     outcome = run_scenario_for_baseline("made", confidential_scenario, PREFILLED_INFOS, AHP_WEIGHTS)
     assert outcome["selected_candidate_id"] == "deepseek-v4-flash"
     assert outcome["policy_violation"] is False

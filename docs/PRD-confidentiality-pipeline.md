@@ -83,30 +83,49 @@ phase numbering.
 - 1.6 (S) pytest: redact/restore round-trip, mapping stability across
   repeated calls with the same input.
 
-**Phase 2 — Policy tightening**
-- 2.1 (S) Add `redacted: bool = False` to `TaskIn`/`Task`
-  (`MADE/api/schemas.py`, `core/decision/engine.py`). Update
-  `compliance.rego` (or a new `external_vendor.rego`) to deny
-  confidential/restricted `data_classification` for external vendors
-  (`deepseek` included, not just `unverified-oss`) unless `redacted: true`.
-- 2.2 (S) Matching `_test.rego` cases, `opa test policies/hard/`.
+**Phase 2 — Policy tightening** ✅ done
+- 2.1 `redacted: bool = False` added to `TaskIn`/`Task`
+  (`MADE/api/schemas.py`, `core/decision/engine.py`). New
+  `external_vendor.rego` denies confidential/restricted
+  `data_classification` for external vendors (`deepseek`, `openai`) unless
+  `redacted: true`. Verified live: `POST /decide` with confidential+deepseek
+  denies without `redacted`, allows with it.
+- 2.2 21/21 `opa test policies/hard/` pass (6 new cases); one pre-existing
+  test (`privacy_test.rego`'s EU-residency check) updated to pass
+  `redacted: true` so it isolates the region-specific rule it's actually
+  testing, now that the broader external-vendor rule also applies to its
+  input.
+- **Bonus bug found while wiring this up:** `POST /decide`
+  (`MADE/api/main.py`) and the experiment harness
+  (`MADE/core/experiment/harness.py`) both built their internal `Task`
+  without passing through the request's `complexity` field at all — every
+  decision silently used the default `"medium"`, so the HF complexity
+  classifier's output never actually influenced model routing despite
+  looking like it did (the raw request was logged correctly, just never
+  consumed). Fixed in both places alongside adding `redacted`; regression
+  test added that proves complexity changes which candidate wins (not just
+  that the field is accepted).
 
-**Phase 3 — Wire the primary caller (Open WebUI)**
+**Phase 3 — Wire the primary caller (Open WebUI)** ✅ (3.1, 3.2 done; 3.3 deferred)
 This is where the guarantee actually starts protecting real traffic — Open
 WebUI's chat path talks to DeepSeek directly and never touches this Node
 app, so Phases 1-2 alone protect nothing yet.
-- 3.1 (M) `openwebui-filters/confidential_redaction.py` — same
-  `inlet`/`outlet` shape as `made_routing.py` (built and verified working
-  this session): `inlet` calls `/privacy/redact` on `body["messages"]`,
-  `outlet` calls `/privacy/restore` on the reply.
-- 3.2 (S) `src/openwebui-provision-redaction.ts` — provisioning script
-  mirroring `openwebui-provision.ts`. **Slots directly into the
-  provisioning reconciler already built this session**
-  (`src/openwebui-provisioning-reconciler.ts`) — add one more
-  `provisionRedactionFilter()` call there and it gets auto-reconciled for
-  free, no new infrastructure needed.
-- 3.3 (S) `src/chat.ts` — same redact/restore calls, lower priority since
-  Open WebUI is the primary surface, not this app's own chat page.
+- 3.1 (M) ✅ `openwebui-filters/confidential_redaction.py` — same
+  `inlet`/`outlet` shape as `made_routing.py`: `inlet` calls
+  `/privacy/redact` on user messages and sets `body["_privacy"]` when it
+  redacts anything (consumed by `made_routing.py`'s `_call_made()`),
+  `outlet` calls `/privacy/restore` on every message. `Valves.priority =
+  -10` so it runs before `made_routing.py` (default `0`). 8 tests in
+  `openwebui-filters/tests/test_confidential_redaction.py`, all passing.
+- 3.2 (S) ✅ `src/openwebui-provision-redaction.ts` — `provisionRedactionFilter()`,
+  simpler than `provisionFilter()` (no `OPENWEBUI_URL`/token valve needed —
+  this Filter never calls Open WebUI's own API, only MADE's). Wired into
+  `reconcileOnce()` in `src/openwebui-provisioning-reconciler.ts`. TS tests
+  in `tests/openwebui-provision-redaction.test.ts` and updated
+  `tests/openwebui-provisioning-reconciler.test.ts`.
+- 3.3 (S) deferred — `src/chat.ts` same redact/restore calls, lower
+  priority since Open WebUI is the primary surface, not this app's own
+  chat page.
 
 ## Related docs
 

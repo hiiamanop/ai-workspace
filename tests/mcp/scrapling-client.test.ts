@@ -26,6 +26,30 @@ test("callScrape() connects, calls the fetch tool with the url, and closes the c
   assert.equal(closed, true);
 });
 
+test("callScrape() truncates results longer than the character cap", async () => {
+  const longPage = "x".repeat(20_000);
+  const fakeConnect = async () => ({
+    callTool: async () => longPage,
+    close: async () => {},
+  });
+
+  const result = await callScrape("https://example.com", fakeConnect);
+
+  assert.ok(result.length < longPage.length);
+  assert.match(result, /truncated, \d+ more characters omitted/);
+});
+
+test("callScrape() leaves short results untouched", async () => {
+  const fakeConnect = async () => ({
+    callTool: async () => "short page content",
+    close: async () => {},
+  });
+
+  const result = await callScrape("https://example.com", fakeConnect);
+
+  assert.equal(result, "short page content");
+});
+
 test("callScrape() rejects non-http(s) schemes without connecting", async () => {
   let connected = false;
   const fakeConnect = async () => {
