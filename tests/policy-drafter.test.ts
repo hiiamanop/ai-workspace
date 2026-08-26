@@ -3,14 +3,30 @@ import { test } from "node:test";
 import { draftPolicy } from "../src/policy-drafter.ts";
 import type { ChatMessage, CompletionResult } from "../src/types.ts";
 
-function stubComplete(result: string) {
+// The drafter makes up to two LLM calls per turn: one to draft (returns
+// `draftReply`), and, when the draft has a fenced markdown block, a second one
+// to validate it via compilePolicy (returns `validationReply`). The stub is
+// call-count based so tests can give each call different output.
+function stubComplete(draftReply: string, validationReply?: string) {
   const calls: Array<{ model: string; messages: ChatMessage[] }> = [];
+  let n = 0;
   const complete = async (model: string, messages: ChatMessage[]): Promise<CompletionResult> => {
     calls.push({ model, messages });
-    return { content: result, toolCalls: [] };
+    n += 1;
+    return { content: n === 1 ? draftReply : (validationReply ?? draftReply), toolCalls: [] };
   };
   return { complete, calls };
 }
+
+const VALID_REGO = [
+  "package made.hard",
+  "",
+  'deny[msg] {',
+  '  input.candidate.vendor == "deepseek"',
+  "  not input.task.redacted",
+  '  msg := "DeepSeek over budget"',
+  "}",
+].join("\n");
 
 const VALID_DRAFT_REPLY = [
   "Here's a draft that caps DeepSeek spend:",
@@ -39,7 +55,7 @@ test("sends system prompt + conversation to the flash model", async () => {
 });
 
 test("extracts and validates the fenced markdown draft when it compiles cleanly", async () => {
-  const { complete } = stubComplete(VALID_DRAFT_REPLY);
+  const { complete } = stubComplete(VALID_DRAFT_REPLY, VALID_REGO);
 
   const out = await draftPolicy([{ role: "user", content: "Limit DeepSeek spend to $0.10/request" }], { complete });
 
@@ -56,17 +72,17 @@ test("returns null draftMarkdown for a clarifying question with no fence", async
   assert.equal(out.draftMarkdown, null);
 });
 
-test("a fenced draft that fails deterministic compilation is not treated as ready, and the error is surfaced", async () => {
+test("a fenced draft that fails LLM compilation is not treated as ready, and the error is surfaced", async () => {
   const reply = ["Here's the policy:", "", "```markdown", "# Policy", "Deny DeepSeek over budget somehow.", "```"].join(
     "\n"
   );
-  const { complete } = stubComplete(reply);
+  const { complete } = stubComplete(reply, "This is not valid Rego.");
 
   const out = await draftPolicy([{ role: "user", content: "Cap DeepSeek spend" }], { complete });
 
   assert.equal(out.draftMarkdown, null);
   assert.match(out.content, /doesn't compile yet/);
-  assert.match(out.content, /No IF\/THEN rules found/);
+  assert.match(out.content, /package made\.hard/);
 });
 
 test("rejects an empty message list", async () => {
