@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { provisionTools, TOOL_DEFINITIONS } from "../src/openwebui-provision-tools.ts";
+import { provisionTools, TOOL_DEFINITIONS, withFrontmatter } from "../src/openwebui-provision-tools.ts";
 
 const deps = {
   openwebuiUrl: "http://open-webui:8080",
@@ -92,11 +92,21 @@ test("provisionTools() skips tools that are already up-to-date", async () => {
     "/api/v1/auths/signin": () =>
       new Response(JSON.stringify({ token: "tok-1" }), { status: 200 }),
     "/api/v1/tools/id/web_search": () =>
-      new Response(JSON.stringify({ id: "web_search", content: TOOL_DEFINITIONS[0].source }), {
-        status: 200,
-      }),
+      new Response(
+        JSON.stringify({
+          id: "web_search",
+          content: withFrontmatter(TOOL_DEFINITIONS[0].source, TOOL_DEFINITIONS[0].madeScores),
+        }),
+        { status: 200 }
+      ),
     "/api/v1/tools/id/scrape": () =>
-      new Response(JSON.stringify({ id: "scrape", content: TOOL_DEFINITIONS[1].source }), { status: 200 }),
+      new Response(
+        JSON.stringify({
+          id: "scrape",
+          content: withFrontmatter(TOOL_DEFINITIONS[1].source, TOOL_DEFINITIONS[1].madeScores),
+        }),
+        { status: 200 }
+      ),
     "/api/v1/tools/create": () => {
       createCalls++;
       return new Response(JSON.stringify({}), { status: 200 });
@@ -162,12 +172,12 @@ test("tool definitions are structurally valid Python sources", () => {
     // Structural sanity only — no python interpreter in the test env.
     // ponytail: catches typos/regressions in def names, Valves wiring, and
     // the f-string usage; real syntax check happens when Open WebUI loads it.
-    assert.match(tool.source, /^from pydantic import BaseModel, Field\nimport requests\n\nclass Valves\(BaseModel\):/);
+    assert.match(tool.source, /^from pydantic import BaseModel, Field\nimport requests\n\n\nclass Tools:\n    class Valves\(BaseModel\):/);
     assert.match(tool.source, /backend_url: str = Field\(/);
     assert.match(tool.source, /valves\.backend_url/);
     assert.match(tool.source, /timeout=10/);
     assert.match(tool.source, /status": "error"/);
   }
-  assert.match(TOOL_DEFINITIONS[0].source, /^def web_search\(query: str, language: str = "en"\) -> dict:/m);
-  assert.match(TOOL_DEFINITIONS[1].source, /^def scrape\(url: str\) -> dict:/m);
+  assert.match(TOOL_DEFINITIONS[0].source, /^    def web_search\(self, query: str, language: str = "en"\) -> dict:/m);
+  assert.match(TOOL_DEFINITIONS[1].source, /^    def scrape\(self, url: str\) -> dict:/m);
 });

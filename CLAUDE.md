@@ -29,27 +29,50 @@ node --import tsx --test tests/chat.test.ts -t "onSources" # single test by name
 npx tsc --noEmit       # typecheck only
 ```
 
-Full local run needs three processes, none of which survive a session switch:
+Full local run needs two processes, neither of which survives a session switch:
 1. MADE (separate repo, `/home/naufa/workspace/MODE`): `.venv/bin/python -m uvicorn api.main:app --port 8000`
-2. Ollama: `ollama serve` — **must set `OLLAMA_CONTEXT_LENGTH=8192` or higher**, or GenOffice's AI panel silently returns empty content (its combined system prompt + tool schemas eat almost all of Ollama's default 4096-token context window before the model gets to respond). Not persisted across restarts since Ollama isn't run as a service here — re-set it every time.
-3. This project: `npm install && npm run dev`
+2. This project: `npm install && npm run dev`
 
-Or the whole stack via Docker: `cp .env.example .env` (`env_file: .env` is not optional for `docker compose up`) then `docker compose up --build`. Compose brings up `app`, `searxng`, `scrapling`, `made`, and `open-webui`. `OLLAMA_BASE_URL` inside Docker points at `host.docker.internal` — Ollama itself still runs on the host, not in a container. Rebuild (`--build`) after any dependency change or `git merge` — a plain `docker compose up` reuses stale images and a plain `git merge` doesn't run `npm install`, so `node_modules` silently goes stale after pulling.
+This project's own chat (`chat.ts`) is DeepSeek-only (API-token based, via `DEEPSEEK_API_KEY` in `.env`) — there is no local model provider.
+
+Or the whole stack via Docker: `cp .env.example .env` (`env_file: .env` is not optional for `docker compose up`) then `docker compose up --build`. Compose brings up `app`, `searxng`, `scrapling`, `made`, and `open-webui`. Rebuild (`--build`) after any dependency change or `git merge` — a plain `docker compose up` reuses stale images and a plain `git merge` doesn't run `npm install`, so `node_modules` silently goes stale after pulling.
 
 Open WebUI is reachable at `http://localhost:3001`; `WEBUI_SECRET_KEY` must be set in `.env` or the container refuses to start (see `.env.example`). The first account created via sign-up becomes admin. LLM providers (e.g. DeepSeek) are configured entirely inside Open WebUI's Admin Settings post-login, not via `.env`—this project deliberately keeps zero LLM provider secrets in scope.
 
-**MADE-routing setup (one-time, manual, after `open-webui` is up):**
+**Provisioning is auto-reconciled, not just a one-time script.** If
+`OPENWEBUI_ADMIN_EMAIL`/`OPENWEBUI_ADMIN_PASSWORD` are set, `server.ts`
+starts `src/openwebui-provisioning-reconciler.ts` alongside the health
+monitor — it re-runs `provisionFilter()`/`provisionTools()` every 5 minutes
+(immediately on startup, then on an interval), tolerating Open WebUI/MADE
+being briefly unreachable the same way the health monitor does. This is
+what keeps the Filter and Tools registered after a fresh `open-webui-data`
+volume, a container recreate, or a source change to `made_routing.py`,
+without a human remembering to re-run the CLI scripts. The manual steps
+below are for **initial setup** (creating the account, the tier/brand
+models) — steps 3 and the tools-provisioning script still work standalone
+for a one-off run (e.g. to verify a change immediately instead of waiting
+up to 5 minutes), but aren't required for steady-state operation anymore.
+
+**Complexity classification is a length heuristic, not an LLM call.**
+`made_routing.py`'s `_classify_complexity()` used to make a full extra chat
+completion per message just to get one word (low/medium/high) out —
+doubling the cost of every turn. It's now synchronous and free: message
+length + word count against fixed thresholds. Less precise, but MADE's own
+soft ranking already absorbs classification error; not worth an LLM call.
+
+**MADE-routing setup (one-time, after `open-webui` is up):**
 1. Create an automation admin account by signing up a second time with a
    dedicated email (or reuse your first admin account) — put its
    credentials in `.env` as `OPENWEBUI_ADMIN_EMAIL`/`OPENWEBUI_ADMIN_PASSWORD`.
-2. Ensure `MADE_URL` and `CLASSIFIER_MODEL` are set in `.env` (see `.env.example`).
-   The provisioning script uses these to configure the Filter's valves.
+2. Ensure `MADE_URL` is set in `.env` (see `.env.example`). The provisioning
+   script uses it to configure the Filter's valves.
 3. Run `node --import tsx src/openwebui-provision.ts` to install the
    MADE-routing Filter (`openwebui-filters/made_routing.py`) into Open
-   WebUI. The script automatically:
+   WebUI (the reconciler above does this automatically too, but a manual
+   run reflects a source change right away). The script automatically:
    - Creates a long-lived API key for the Filter to use (avoids JWT expiry issues)
    - Creates or updates the Filter function with its content
-   - Provisions the Filter's configuration (MADE_URL, Open WebUI URL, token, classifier model)
+   - Provisions the Filter's configuration (MADE_URL, Open WebUI URL, token)
    Re-run this any time the Filter's source changes, or after a fresh volume/deploy.
 4. In Open WebUI's Admin Settings → Models, create the tier models for
    each brand (e.g. `deepseek-v4-flash`, `deepseek-v4-pro`), each with a
@@ -80,13 +103,16 @@ Open WebUI is reachable at `http://localhost:3001`; `WEBUI_SECRET_KEY` must be s
 5. Create one brand entry per brand (e.g. id `deepseek`) — `base_model_id`
    pointing at any one of that brand's tiers (MADE overrides it on every
    call while healthy). The brand entry's `meta.made_scores` MUST contain
-   ONLY `{ "brand": "deepseek" }` with NO `cost_per_1k_tokens`.
+   ONLY `{ "brand": "deepseek" }` with NO `cost_per_1k_tokens`. Name it
+   `"<Brand> (auto)"` (e.g. `"DeepSeek (auto)"`) so it's explicit in the
+   model picker that selecting it hands the tier choice to MADE.
    This discriminator is how the Filter and health monitor recognize the
    brand entry from tier entries.
-6. The health monitor runs automatically if `OPENWEBUI_ADMIN_EMAIL` and
-   `OPENWEBUI_ADMIN_PASSWORD` are set in `.env` (same account from step 1).
-   It signs in fresh on each check, avoiding token expiry issues.
-   The monitor checks MADE's health and toggles only the brand entry's visibility:
+6. The health monitor **and** the provisioning reconciler run automatically
+   if `OPENWEBUI_ADMIN_EMAIL` and `OPENWEBUI_ADMIN_PASSWORD` are set in
+   `.env` (same account from step 1). Both sign in fresh on each cycle,
+   avoiding token expiry issues. The health monitor checks MADE's health
+   and toggles only the brand entry's visibility:
    - MADE healthy: brand entry active (users select the brand, filter routes to tiers via MADE)
    - MADE unhealthy: brand entry inactive (tiers are directly selectable as fallback, always public)
 
@@ -98,25 +124,17 @@ Open WebUI is reachable at `http://localhost:3001`; `WEBUI_SECRET_KEY` must be s
 
 **Policy authoring UI (C2, admin-only):** `open-webui/src/routes/(app)/workspace/policies/` — list, `[id]` editor (split-pane Markdown/Rego with live compile + autosave), and `new`. Backed by C1's `/api/v1/policies*` endpoints. Gotchas when touching it: timestamps are epoch-ns BigInts (format via `$lib/utils/policies.ts::formatEpochNs`); C1's compile endpoint compiles the policy's **saved** markdown, so the editor always saves before compiling; policy rename is not supported by the backend (PUT only takes `markdown_content`). Admin-only tab in `(app)/workspace/+layout.svelte`; non-admins are redirected to `/`.
 
-**Tools registration (D1):** `src/openwebui-provision-tools.ts` provisions `web_search` + `scrape` as native Open WebUI Tools (`node --import tsx src/openwebui-provision-tools.ts`). Each tool is a Python function that calls back into this project's `/api/web-search` / `/api/scrape` routes — the backend base URL lives in the tool's `backend_url` valve (default `http://app:3000`, the compose `app` service as seen from the open-webui container; host-dev: `OPENWEBUI_BACKEND_URL=http://localhost:3000`). Idempotent: creates, updates when source differs, skips when up-to-date (valves always re-applied). Requires `OPENWEBUI_ADMIN_EMAIL`/`OPENWEBUI_ADMIN_PASSWORD` in `.env`.
+**Tools registration (D1):** `src/openwebui-provision-tools.ts` provisions `web_search` + `scrape` as native Open WebUI Tools (`node --import tsx src/openwebui-provision-tools.ts`). Each tool is a Python function that calls back into this project's `/api/web-search` / `/api/scrape` routes — the backend base URL lives in the tool's `backend_url` valve (default `http://app:3000`, the compose `app` service as seen from the open-webui container; host-dev: `OPENWEBUI_BACKEND_URL=http://localhost:3000`). Idempotent: creates, updates when source or `made_scores` differ, skips when up-to-date (valves always re-applied). Requires `OPENWEBUI_ADMIN_EMAIL`/`OPENWEBUI_ADMIN_PASSWORD` in `.env`. A newly created model's `meta.toolIds` is **not** set automatically — attach `["web_search", "scrape"]` to a model (`POST /api/v1/models/model/update?id=<id>`) or the model won't see the tools exist at all, regardless of what's registered.
 
-**Documents workspace (D2+D3):** `open-webui/src/routes/(app)/workspace/documents/` — list view + `[id]` route that iframes GenOffice at the absolute `http://localhost:3000/document` (the ai-workspace backend's own build, so the iframe works regardless of Open WebUI's container port). The `id` segment is cosmetic for now — GenOffice keeps document state client-side via the File System Access API, so there's no per-doc metadata backend yet. Documents tab in the workspace nav is visible to all users (no admin gate).
-
-GenOffice (`genoffice/`) is its own npm workspace root, vendored separately — `cd genoffice && npm install` before touching anything under it. Its own commands: `npm run typecheck` / `npm run test -- --run` (vitest) scoped per-app, e.g. `cd genoffice/apps/docs && npm run typecheck`.
+**MADE-driven tool selection ("Auto"):** each tool's `meta.manifest.made_scores` (set by the provisioning script above, scores copied from `src/candidates.ts`'s `WEB_SEARCH_CANDIDATE`/`SCRAPE_CANDIDATE`) is what lets `made_routing.py` treat tools the same way it treats model tiers. The chat UI's tools menu (`IntegrationsMenu.svelte`) has a synthetic "Auto (MADE decides)" entry, mutually exclusive with manually-picked tools; selecting it sends `tool_ids: ["auto"]`. The Filter's `inlet()` sees that sentinel, calls MADE with `decision_kind: "tool_selection"` using every tool's `made_scores` as candidates, and replaces `tool_ids` with **every id in the response's `ranking`** (not just the top one — multiple tools can be usable in one turn, unlike model selection). Fails closed (`tool_ids: []`) if MADE is unreachable or has no scored candidates — there's no safe "cheapest tool" fallback the way model routing has one.
 
 ## Architecture
 
-**Request flow:** every chat/agent-turn request first calls MADE's `POST /decide` (a separate Python/FastAPI service from an unrelated thesis repo, reached only over HTTP — never import its code) to pick which model and which tools are allowed for that request, based on cost/quality/latency/risk policy (Rego hard constraints + TOPSIS soft ranking). Only after MADE approves does the code call a provider client (`src/providers/ollama-client.ts` or `deepseek-client.ts`) or execute a tool. `MADE returned no eligible candidate` / `requires human approval` from that response are real control-flow branches, not edge cases — always check them before assuming a model/tool is usable.
+**Request flow:** every chat request first calls MADE's `POST /decide` (a separate Python/FastAPI service from an unrelated thesis repo, reached only over HTTP — never import its code) to pick which model and which tools are allowed for that request, based on cost/quality/latency/risk policy (Rego hard constraints + TOPSIS soft ranking). Only after MADE approves does the code call a provider client (`src/providers/deepseek-client.ts`) or execute a tool. `MADE returned no eligible candidate` / `requires human approval` from that response are real control-flow branches, not edge cases — always check them before assuming a model/tool is usable.
 
-**Two entry points, one shared tool-calling core:**
-- `src/chat.ts`'s `handleChat()` — the standalone chat page (`/`, `client/src/chat/ChatApp.tsx`), owns its own multi-turn history with mechanical token-budget trimming (`src/history-budget.ts`, `HISTORY_BUDGET_TOKENS`).
-- `src/agent-turn.ts`'s `handleAgentTurn()` — used by GenOffice's document AI panel (`/document`). Distinguishes **server-executed tools** (`web_search`, `scrape` — resolved internally via SearXNG/Scrapling MCP, the caller never sees them) from **client-executed tools** (GenOffice's own document-editing tools — returned to the caller unexecuted as `{type:"tool_calls"}` for it to run and continue the turn with the result).
+**Entry point:** `src/chat.ts`'s `handleChat()` — the standalone chat page (`/`, `client/src/chat/ChatApp.tsx`), owns its own multi-turn history with mechanical token-budget trimming (`src/history-budget.ts`, `HISTORY_BUDGET_TOKENS`). Accepts optional `streamCallbacks` (`onDelta`, `onToolCallDelta`, `onToolResult`, `onSources`) — when present, the provider client streams via SSE (`completeStream()` in `src/providers/deepseek-client.ts`) instead of one-shot `complete()`. `src/server.ts` is the only place that turns these callbacks into wire events: a persistent WebSocket at `/ws`, one connection per page session, turn-based protocol keyed by a server-generated `turnId` with monotonic per-turn `seq` numbers. Events are buffered (capped, evicted after completion) so a client can `{type:"resume", turnId, lastSeq}` after a reconnect and replay only what it missed — `ChatApp.tsx` implements this.
 
-Both loops accept optional `streamCallbacks` (`onDelta`, `onToolCallDelta`, `onToolResult`, `onSources`) — when present, provider clients stream via SSE (`completeStream()` in each `src/providers/*-client.ts`) instead of one-shot `complete()`. `src/server.ts` is the only place that turns these callbacks into wire events: a persistent WebSocket at `/ws`, one connection per page session, turn-based protocol keyed by a server-generated `turnId` with monotonic per-turn `seq` numbers. Events are buffered (capped, evicted after completion) so a client can `{type:"resume", turnId, lastSeq}` after a reconnect and replay only what it missed — `ChatApp.tsx` implements this; GenOffice's `transport.ts` deliberately does not (a mid-turn disconnect there errors cleanly instead of hanging, but never auto-resumes).
-
-**Web search citations:** `src/mcp/searxng-client.ts`'s `callWebSearch()` asks `mcp-searxng` for `response_format:"json"` and returns structured `WebSearchResult[]` (not raw text). `src/web-search-format.ts` turns that into a numbered `[N]` citable block, with the numbering offset threaded per-turn through `chat.ts`/`agent-turn.ts` so multiple searches in one turn don't collide. Both UIs render `[N]` markers as clickable chips backed by the matching structured result — see `docs/superpowers/specs/2026-08-12-inline-citations-design.md` before touching this again, and note the citation-state lifetime gotcha recorded there and in the Obsidian note of the same date (GenOffice's citation counter is module-level/session-scoped in `tools.ts`, while the UI-side accumulator has to be kept in lockstep with it — this exact class of bug has bitten twice).
-
-**GenOffice** (`genoffice/`) is a vendored (not submoduled — its own `.git` was removed) Apache-2.0 Electron office suite, run here as a plain browser page instead of packaged Electron. Its Electron IPC bridge (`window.desktop`/`window.projectApi`) is replaced by `genoffice/apps/docs/src/renderer/desktop-stub.ts` — anything that stub doesn't implement (currently: `image_search`, real `.docx` file save, PDF export, and a few others) fails or no-ops rather than throwing. When `desktop-stub.ts` needs to reach a real backend capability (as `webSearch` now does), it calls this project's own `/api/*` routes, same-origin — GenOffice's own build (`genoffice/apps/docs`'s Vite/Electron config) is not otherwise involved in serving `/document`; this repo's own `vite.config.ts` resolves GenOffice's renderer source and builds it into `client/dist/document.html` alongside the chat page. GenOffice has its own `CLAUDE.md` (theming token rules, main-vs-renderer build gotchas) — read it before editing anything under `genoffice/`.
+**Web search citations:** `src/mcp/searxng-client.ts`'s `callWebSearch()` asks `mcp-searxng` for `response_format:"json"` and returns structured `WebSearchResult[]` (not raw text). `src/web-search-format.ts` turns that into a numbered `[N]` citable block, with the numbering offset threaded per-turn through `chat.ts` so multiple searches in one turn don't collide. `ChatApp.tsx` renders `[N]` markers as clickable chips backed by the matching structured result — see `docs/superpowers/specs/2026-08-12-inline-citations-design.md` before touching this again.
 
 **MADE integration specifics:** `decide()` calls take `DecideRequest{task, org, decision_kind, candidates, policy_set}`. `decision_kind` is `"model_selection" | "tool_selection" | "human_approval"`. `src/context-guard.ts`'s `ensureCandidateFits()` re-checks capacity mid-loop (not just at the start of a turn) and can switch models if a growing conversation would exceed the current model's context window — it re-derives its `DecideRequest` from a caller-supplied `baseRequest` rather than building its own, specifically to avoid drifting from whatever policy classification the caller already established.
 
@@ -124,6 +142,4 @@ Both loops accept optional `streamCallbacks` (`onDelta`, `onToolCallDelta`, `onT
 
 No mandatory spec/plan/subagent-review ritual for this repo. Work directly on requests like a senior engineer: read the relevant code, make the change, verify it (run tests/typecheck, or check the diff), report what changed. Reserve upfront design discussion for genuinely ambiguous or high-blast-radius changes — ask a targeted question or state the tradeoff in a sentence, don't produce a brainstorm/spec/plan document for it. Don't spawn subagents or worktrees for routine work; do it inline.
 
-`docs/superpowers/` holds historical specs/plans from when this repo used that process — still useful as a record of past decisions (most recent dated doc wins over an older superseded one, e.g. Univer was replaced by GenOffice), but nothing new needs to be added there.
-
-Both `src/chat.ts` and `src/agent-turn.ts` deliberately duplicate the same tool-loop shape rather than sharing an abstraction — they diverge just enough (client-vs-server tool split, history handling) that a shared abstraction was rejected. Match this existing duplication pattern rather than trying to unify it.
+`docs/superpowers/` holds historical specs/plans from when this repo used that process — still useful as a record of past decisions, but nothing new needs to be added there.

@@ -7,7 +7,6 @@ export interface ProvisionDeps {
   adminEmail: string;
   adminPassword: string;
   filterSourcePath: string;
-  classifierModel?: string;
   fetchFn?: typeof fetch;
 }
 
@@ -19,7 +18,6 @@ export interface ProvisionResult {
 export async function provisionFilter(deps: ProvisionDeps): Promise<ProvisionResult> {
   const fetchFn = deps.fetchFn ?? fetch;
   const madeUrl = deps.madeUrl ?? process.env.MADE_URL ?? "http://made:8000";
-  const classifierModel = deps.classifierModel ?? "deepseek-v4-flash";
 
   const signinRes = await fetchFn(`${deps.openwebuiUrl}/api/v1/auths/signin`, {
     method: "POST",
@@ -165,7 +163,6 @@ export async function provisionFilter(deps: ProvisionDeps): Promise<ProvisionRes
       MADE_URL: madeUrl,
       OPENWEBUI_URL: deps.openwebuiUrl,
       OPENWEBUI_TOKEN: openwebuiToken,
-      CLASSIFIER_MODEL: classifierModel,
     }),
   });
 
@@ -182,10 +179,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const madeUrl = process.env.MADE_URL ?? "http://made:8000";
   const adminEmail = process.env.OPENWEBUI_ADMIN_EMAIL ?? "";
   const adminPassword = process.env.OPENWEBUI_ADMIN_PASSWORD ?? "";
-  const classifierModel = process.env.CLASSIFIER_MODEL ?? "deepseek-v4-flash";
   const filterSourcePath = fileURLToPath(new URL("../openwebui-filters/made_routing.py", import.meta.url));
 
-  provisionFilter({ openwebuiUrl, madeUrl, adminEmail, adminPassword, filterSourcePath, classifierModel }).then((result) => {
+  provisionFilter({ openwebuiUrl, madeUrl, adminEmail, adminPassword, filterSourcePath }).then((result) => {
     if (!result.ok) {
       console.error(`Provisioning failed: ${result.error}`);
       process.exit(1);

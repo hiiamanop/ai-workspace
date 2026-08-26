@@ -138,7 +138,6 @@ test("WS: chat turn emits a sources event when the handler's streamCallbacks.onS
 test("POST /api/web-search returns structured results as JSON", async () => {
   const server = createServer(
     async () => ({ selectedCandidateId: "x", reply: "y", toolsUsed: [] }),
-    undefined,
     async (query: string, maxResults?: number) => ({
       results: [{ title: `result for ${query}`, url: "https://x.example", snippet: `max ${maxResults ?? "default"}` }],
     })
@@ -178,7 +177,6 @@ test("POST /api/web-search with missing query returns 400", async () => {
 test("POST /api/web-search returns 500 with the error message when the search executor throws", async () => {
   const server = createServer(
     async () => ({ selectedCandidateId: "x", reply: "y", toolsUsed: [] }),
-    undefined,
     async () => {
       throw new Error("searxng unreachable");
     }
@@ -201,7 +199,6 @@ test("POST /api/web-search returns 500 with the error message when the search ex
 test("POST /api/scrape returns scraped content as JSON", async () => {
   const server = createServer(
     async () => ({ selectedCandidateId: "x", reply: "y", toolsUsed: [] }),
-    undefined,
     undefined,
     async (url: string) => `# ${url}\n\ncontent of ${url}`
   );
@@ -238,7 +235,6 @@ test("POST /api/scrape with missing url returns 400", async () => {
 test("POST /api/scrape returns 500 with the error message when the scrape executor throws", async () => {
   const server = createServer(
     async () => ({ selectedCandidateId: "x", reply: "y", toolsUsed: [] }),
-    undefined,
     undefined,
     async () => {
       throw new Error("scrape refused: URL targets an internal/private host");

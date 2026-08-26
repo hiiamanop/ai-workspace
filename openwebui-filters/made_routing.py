@@ -17,6 +17,29 @@ GET /api/v1/models/list: each model's `meta.made_scores` either
 Whether `body["model"]` names a brand or an already-concrete tier is
 determined by that presence/absence of `cost_per_1k_tokens` on the
 matching registry entry, not by list position or count.
+
+Complexity classification: `_classify_complexity()` calls MADE's own
+POST /classify (a small local HF model, not an LLM) to rate the latest
+user message low/medium/high before asking MADE which model tier to route
+to. Falls back to "medium" if MADE is unreachable.
+
+Tool selection: if the client sends `"auto"` in `body["tool_ids"]` (a
+sentinel the chat UI's "Auto (MADE decides)" toggle sends instead of real
+tool ids), this Filter fetches Open WebUI's tool registry
+(GET /api/v1/tools/, unpaginated) and reads MADE scores off each tool's
+`meta.manifest` — flat string keys `made_cost`, `made_quality`,
+`made_latency`, `made_business_risk` (Open WebUI derives meta.manifest by
+re-parsing a docstring frontmatter block of `key: value` lines at the top
+of the tool's own Python source on every create/update — it discards
+whatever meta.manifest you POST directly, so scores can't live there as a
+nested dict the way model `meta.made_scores` do; key names must also be
+pure [a-z_]+, no digits, or the line silently fails to parse — e.g.
+`made_cost_per_1k_tokens` would never appear). It asks MADE's
+tool_selection decision and replaces `body["tool_ids"]` with every id in
+the response's `ranking` (not just the top one — unlike model selection,
+multiple tools can be usable in one turn). If MADE can't be reached or
+returns no ranked tools, tool_ids becomes `[]` — fails closed, since there
+is no safe "cheapest tool" fallback the way there is for models.
 """
 import aiohttp
 from pydantic import BaseModel
@@ -27,13 +50,15 @@ class Filter:
         MADE_URL: str = "http://made:8000"
         OPENWEBUI_URL: str = "http://open-webui:8080"
         OPENWEBUI_TOKEN: str = ""
-        CLASSIFIER_MODEL: str = "deepseek-v4-flash"
         REQUEST_TIMEOUT_SECONDS: float = 8.0
 
     def __init__(self):
         self.valves = self.Valves()
 
     async def inlet(self, body: dict, __user__: dict = None) -> dict:
+        if "auto" in (body.get("tool_ids") or []):
+            body["tool_ids"] = await self._route_tools(body)
+
         model_id = body.get("model", "")
         try:
             models = await self._list_models()
@@ -75,6 +100,87 @@ class Filter:
             body["model"] = fallback_model
         return body
 
+    async def _route_tools(self, body: dict) -> list[str]:
+        try:
+            tools = await self._list_tools()
+        except Exception as err:
+            print(f"MADE routing: tool list fetch failed: {err}, no tools will be used")
+            return []
+
+        candidates = []
+        for t in tools:
+            # Open WebUI re-derives meta.manifest from a `"""key: value"""`
+            # frontmatter block at the top of the tool's own source on every
+            # create/update — values arrive as plain strings, not a nested dict.
+            manifest = t.get("meta", {}).get("manifest", {})
+            if "made_cost" not in manifest:
+                continue  # tool has no MADE scores — MADE has nothing to rank it on
+            try:
+                cost = float(manifest.get("made_cost", 0))
+                quality = float(manifest.get("made_quality", 0.5))
+                latency = float(manifest.get("made_latency", 0.5))
+                business_risk = float(manifest.get("made_business_risk", 0.5))
+            except (TypeError, ValueError):
+                continue  # malformed scores — skip rather than send garbage to MADE
+            candidates.append({
+                "id": t["id"],
+                "vendor": t["id"],
+                "kind": "tool",
+                "cost_per_1k_tokens": cost,
+                "scores": {
+                    "cost": cost,
+                    "quality": quality,
+                    "latency": latency,
+                    "business_risk": business_risk,
+                },
+            })
+        if not candidates:
+            return []
+
+        try:
+            return await self._call_made_tools(candidates, body)
+        except Exception as err:
+            print(f"MADE routing: tool /decide call failed: {err}, no tools will be used")
+            return []
+
+    async def _list_tools(self) -> list[dict]:
+        """Fetch all tools (plain array response, no pagination)."""
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{self.valves.OPENWEBUI_URL}/api/v1/tools/",
+                headers={"Authorization": f"Bearer {self.valves.OPENWEBUI_TOKEN}"},
+                timeout=aiohttp.ClientTimeout(total=self.valves.REQUEST_TIMEOUT_SECONDS),
+            ) as resp:
+                resp.raise_for_status()
+                tools = await resp.json()
+                if not isinstance(tools, list):
+                    raise ValueError(f"Expected a list response, got {type(tools).__name__}")
+                return tools
+
+    async def _call_made_tools(self, candidates: list[dict], body: dict) -> list[str]:
+        estimated_tokens = sum(len(m.get("content", "")) for m in body.get("messages", [])) // 4
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.valves.MADE_URL}/decide",
+                json={
+                    "task": {
+                        "type": "chat",
+                        # Hardcoded to "internal" — same documented scope limitation as model routing above.
+                        "data_classification": "internal",
+                        "estimated_context_tokens": estimated_tokens,
+                    },
+                    "decision_kind": "tool_selection",
+                    "candidates": candidates,
+                },
+                timeout=aiohttp.ClientTimeout(total=self.valves.REQUEST_TIMEOUT_SECONDS),
+            ) as resp:
+                resp.raise_for_status()
+                decision = await resp.json()
+                if decision.get("requires_human_approval"):
+                    return []
+                return [entry["id"] for entry in decision.get("ranking", [])]
+
     async def _list_models(self) -> list[dict]:
         """Fetch all models, paging through results (30 per page)."""
         all_models = []
@@ -101,32 +207,30 @@ class Filter:
         return all_models
 
     async def _classify_complexity(self, body: dict) -> str:
+        """Ask MADE's /classify — a small local HF model (deberta-v3-small,
+        ~100M params), not an LLM call. Correctly separates prompt *length*
+        from task *difficulty* (a long-but-easy prompt still comes back
+        "low"; a short-but-hard one still comes back "high"), which a
+        length-only heuristic cannot do. ~30-60ms on CPU once warmed up —
+        no per-message API cost, unlike asking a chat model to self-report.
+        """
         last_user_message = next(
             (m["content"] for m in reversed(body.get("messages", [])) if m.get("role") == "user"),
             "",
         )
+        if not last_user_message:
+            return "medium"
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    f"{self.valves.OPENWEBUI_URL}/api/chat/completions",
-                    headers={"Authorization": f"Bearer {self.valves.OPENWEBUI_TOKEN}"},
-                    json={
-                        "model": self.valves.CLASSIFIER_MODEL,
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": "Rate the complexity of the user's message as exactly one word: low, medium, or high. Reply with only that word.",
-                            },
-                            {"role": "user", "content": last_user_message},
-                        ],
-                        "stream": False,
-                    },
+                    f"{self.valves.MADE_URL}/classify",
+                    json={"text": last_user_message},
                     timeout=aiohttp.ClientTimeout(total=self.valves.REQUEST_TIMEOUT_SECONDS),
                 ) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
-                    text = data["choices"][0]["message"]["content"].strip().lower()
-                    return text if text in ("low", "medium", "high") else "medium"
+                    complexity = data.get("complexity")
+                    return complexity if complexity in ("low", "medium", "high") else "medium"
         except Exception as err:
             print(f"MADE routing: complexity classification failed: {err}, defaulting to medium")
             return "medium"

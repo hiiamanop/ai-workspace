@@ -5,12 +5,39 @@
 // `app` service from inside the open-webui container; host-dev setups set
 // OPENWEBUI_BACKEND_URL=http://localhost:3000 (or edit the valve in the UI).
 
+export interface ToolMadeScores {
+  cost_per_1k_tokens: number;
+  quality: number;
+  latency: number;
+  business_risk: number;
+}
+
 export interface ToolDefinition {
   id: string;
   name: string;
   description: string;
   tags: string[];
   source: string;
+  madeScores: ToolMadeScores;
+}
+
+// Open WebUI derives meta.manifest by re-parsing this frontmatter block out
+// of `content` on every create/update (see extract_frontmatter() in its own
+// utils/plugin.py) — it overwrites whatever `meta.manifest` you POST, so
+// made_scores has to live here, not in the request payload's meta field.
+// The parser only understands flat `key: value` string lines, no nesting.
+// Key names must be pure [a-z_]+ — Open WebUI's frontmatter regex
+// (extract_frontmatter in its own utils/plugin.py) doesn't allow digits, so
+// e.g. "made_cost_per_1k_tokens" would silently fail to match and get
+// dropped. "made_cost" stands in for cost_per_1k_tokens.
+export function withFrontmatter(source: string, scores: ToolMadeScores): string {
+  return `"""
+made_cost: ${scores.cost_per_1k_tokens}
+made_quality: ${scores.quality}
+made_latency: ${scores.latency}
+made_business_risk: ${scores.business_risk}
+"""
+${source}`;
 }
 
 export interface ProvisionToolsDeps {
@@ -94,6 +121,9 @@ class Tools:
         return {"status": "error", "error": f"Scrape failed: {response.status_code}"}
 `;
 
+// Scores mirror src/candidates.ts's WEB_SEARCH_CANDIDATE/SCRAPE_CANDIDATE —
+// one source of truth for "how good is this tool" shared with the
+// ai-workspace-native tool loop (chat.ts).
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     id: "web_search",
@@ -101,6 +131,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description: "Search the web using SearXNG. Returns structured results with titles, URLs, and snippets.",
     tags: ["search", "web", "information-retrieval"],
     source: webSearchSource,
+    madeScores: { cost_per_1k_tokens: 0, quality: 0.7, latency: 3000, business_risk: 0.2 },
   },
   {
     id: "scrape",
@@ -108,6 +139,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description: "Scrape content from a URL. Returns markdown-formatted text.",
     tags: ["scrape", "web", "content-extraction"],
     source: scrapeSource,
+    madeScores: { cost_per_1k_tokens: 0, quality: 0.7, latency: 6000, business_risk: 0.3 },
   },
 ];
 
@@ -133,10 +165,11 @@ export async function provisionTools(deps: ProvisionToolsDeps): Promise<Provisio
 
   const actions: ProvisionToolsResult["actions"] = [];
   for (const tool of TOOL_DEFINITIONS) {
+    const content = withFrontmatter(tool.source, tool.madeScores);
     const payload = {
       id: tool.id,
       name: tool.name,
-      content: tool.source,
+      content,
       meta: { description: tool.description, author: "ai-workspace", tags: tool.tags },
     };
 
@@ -148,7 +181,7 @@ export async function provisionTools(deps: ProvisionToolsDeps): Promise<Provisio
     let action: "created" | "updated" | "up-to-date";
     if (existingRes.ok) {
       const existing = (await existingRes.json()) as { content?: string };
-      if (existing.content === tool.source) {
+      if (existing.content === content) {
         action = "up-to-date";
       } else {
         const updateRes = await fetchFn(`${deps.openwebuiUrl}/api/v1/tools/id/${tool.id}/update`, {

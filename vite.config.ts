@@ -16,21 +16,12 @@ export default defineConfig({
         ws: true,
       },
     },
-    fs: {
-      allow: [
-        resolve(__dirname, "client"),
-        resolve(__dirname, "genoffice/apps/docs/src/renderer"),
-        resolve(__dirname, "genoffice/node_modules"),
-        resolve(__dirname, "genoffice/packages"),
-      ],
-    },
   },
   build: {
     outDir: "dist",
     rollupOptions: {
       input: {
         chat: resolve(__dirname, "client/chat.html"),
-        document: resolve(__dirname, "client/document.html"),
       },
     },
   },

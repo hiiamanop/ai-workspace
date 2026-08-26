@@ -90,6 +90,16 @@
 				};
 				return a;
 			}, {});
+
+			// MADE decides which of the tools above apply to the prompt, instead
+			// of the user picking them by hand. Mutually exclusive with manual
+			// picks — see the click handler below.
+			tools['auto'] = {
+				name: $i18n.t('Auto (MADE decides)'),
+				description: $i18n.t('Let MADE choose which tools to use for this prompt'),
+				enabled: selectedToolIds.includes('auto'),
+				authenticated: true
+			};
 		}
 
 		if ($toolServers) {
@@ -411,8 +421,12 @@
 									const state = tools[toolId].enabled;
 									await tick();
 
-									if (state) {
-										selectedToolIds = [...selectedToolIds, toolId];
+									if (toolId === 'auto') {
+										// "Auto" replaces any manual picks — MADE decides instead.
+										selectedToolIds = state ? ['auto'] : [];
+									} else if (state) {
+										// Picking a real tool by hand overrides "auto".
+										selectedToolIds = [...selectedToolIds.filter((id) => id !== 'auto'), toolId];
 									} else {
 										selectedToolIds = selectedToolIds.filter((id) => id !== toolId);
 									}

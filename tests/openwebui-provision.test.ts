@@ -46,7 +46,6 @@ test("provisionFilter() signs in, creates API key, creates function, toggles it,
       assert.equal(body.MADE_URL, "http://made:8000");
       assert.equal(body.OPENWEBUI_URL, "http://open-webui:8080");
       assert.equal(body.OPENWEBUI_TOKEN, "api-key-xyz");
-      assert.equal(body.CLASSIFIER_MODEL, "deepseek-v4-flash");
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
     }
     throw new Error(`unexpected URL ${u}`);
@@ -58,7 +57,6 @@ test("provisionFilter() signs in, creates API key, creates function, toggles it,
     adminEmail: "admin@example.com",
     adminPassword: "pw",
     filterSourcePath: new URL("../openwebui-filters/made_routing.py", import.meta.url).pathname,
-    classifierModel: "deepseek-v4-flash",
     fetchFn: fakeFetch,
   });
 
@@ -118,7 +116,6 @@ test("provisionFilter() updates function if it already exists, and calls toggles
     adminEmail: "admin@example.com",
     adminPassword: "pw",
     filterSourcePath: new URL("../openwebui-filters/made_routing.py", import.meta.url).pathname,
-    classifierModel: "deepseek-v4-flash",
     fetchFn: fakeFetch,
   });
 
@@ -206,7 +203,6 @@ test("provisionFilter() is idempotent: running it twice produces the same end st
     adminEmail: "admin@example.com",
     adminPassword: "pw",
     filterSourcePath: new URL("../openwebui-filters/made_routing.py", import.meta.url).pathname,
-    classifierModel: "deepseek-v4-flash",
     fetchFn: fakeFetch,
   };
 

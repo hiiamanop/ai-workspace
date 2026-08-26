@@ -52,6 +52,16 @@ class DecideResponse(BaseModel):
     policy_version: str
 
 
+class ClassifyRequest(BaseModel):
+    text: str
+
+
+class ClassifyResponse(BaseModel):
+    complexity: Literal["low", "medium", "high"]
+    label: str
+    score: float
+
+
 class PolicyDeployRequest(BaseModel):
     policy_id: str
     rego_content: str

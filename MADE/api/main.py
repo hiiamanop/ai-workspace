@@ -11,6 +11,8 @@ from fastapi import FastAPI, HTTPException
 
 from api.schemas import (
     BaselineSummaryOut,
+    ClassifyRequest,
+    ClassifyResponse,
     DecideRequest,
     DecideResponse,
     ExcludedOut,
@@ -19,6 +21,7 @@ from api.schemas import (
     PolicyDeployRequest,
     RankingEntryOut,
 )
+import core.complexity as complexity
 from core.decision.engine import DecisionCandidate, Org, Task, decide
 from core.epm.loader import load_epm_manifest
 from core.epm.opa_client import OpaEvaluationError
@@ -62,6 +65,17 @@ def _policy_version(policies_dir: Path) -> str:
 @app.on_event("startup")
 def validate_policies_on_startup() -> None:
     load_epm_manifest(POLICIES_ROOT / "epm.yaml")
+
+
+@app.on_event("startup")
+def warm_up_complexity_classifier() -> None:
+    complexity.warm_up()
+
+
+@app.post("/classify", response_model=ClassifyResponse)
+def post_classify(request: ClassifyRequest) -> ClassifyResponse:
+    complexity_level, label, score = complexity.classify(request.text)
+    return ClassifyResponse(complexity=complexity_level, label=label, score=score)
 
 
 @app.post("/decide", response_model=DecideResponse)

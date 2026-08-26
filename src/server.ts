@@ -5,12 +5,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
 import { handleChat } from "./chat.ts";
-import { handleAgentTurn } from "./agent-turn.ts";
-import type { AgentTurnRequest } from "./agent-turn.ts";
 import type { ChatMessage } from "./types.ts";
 import { callWebSearch, type WebSearchResponse } from "./mcp/searxng-client.ts";
 import { callScrape } from "./mcp/scrapling-client.ts";
 import { startHealthMonitor } from "./openwebui-health-monitor.ts";
+import { startProvisioningReconciler } from "./openwebui-provisioning-reconciler.ts";
 import { compilePolicy, CompileError } from "./openwebui-policy-compiler.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -74,15 +73,13 @@ function emit(turnId: string, message: Record<string, unknown>): void {
 
 type IncomingWsMessage =
   | ({ type: "chat" } & { messages: ChatMessage[] })
-  | ({ type: "agent-turn" } & AgentTurnRequest)
   | { type: "resume"; turnId: string; lastSeq: number }
   | { type: "stop"; turnId: string };
 
 function startTurn(
   socket: WebSocket,
-  msg: { type: "chat"; messages: ChatMessage[] } | ({ type: "agent-turn" } & AgentTurnRequest),
-  handleChatFn: typeof handleChat,
-  handleAgentTurnFn: typeof handleAgentTurn
+  msg: { type: "chat"; messages: ChatMessage[] },
+  handleChatFn: typeof handleChat
 ): void {
   const turnId = crypto.randomUUID();
   const controller = new AbortController();
@@ -99,10 +96,7 @@ function startTurn(
     signal: controller.signal,
   };
 
-  const run =
-    msg.type === "chat"
-      ? handleChatFn(msg.messages, undefined, streamCallbacks)
-      : handleAgentTurnFn(msg, undefined, streamCallbacks);
+  const run = handleChatFn(msg.messages, undefined, streamCallbacks);
 
   run
     .then((result) => {
@@ -126,8 +120,7 @@ function startTurn(
 
 function attachWebSocketServer(
   server: http.Server,
-  handleChatFn: typeof handleChat,
-  handleAgentTurnFn: typeof handleAgentTurn
+  handleChatFn: typeof handleChat
 ): void {
   const wss = new WebSocketServer({ server, path: "/ws" });
   wss.on("connection", (socket: WebSocket) => {
@@ -140,8 +133,8 @@ function attachWebSocketServer(
         return;
       }
 
-      if (msg.type === "chat" || msg.type === "agent-turn") {
-        startTurn(socket, msg, handleChatFn, handleAgentTurnFn);
+      if (msg.type === "chat") {
+        startTurn(socket, msg, handleChatFn);
       } else if (msg.type === "resume") {
         const turn = turns.get(msg.turnId);
         if (!turn) {
@@ -167,7 +160,6 @@ function attachWebSocketServer(
 
 export function createServer(
   handleChatFn: typeof handleChat = handleChat,
-  handleAgentTurnFn: typeof handleAgentTurn = handleAgentTurn,
   webSearchExecutorFn: (query: string, maxResults?: number) => Promise<WebSearchResponse> = callWebSearch,
   scrapeExecutorFn: (url: string) => Promise<string> = callScrape
 ): http.Server {
@@ -195,37 +187,6 @@ export function createServer(
 
         try {
           const result = await handleChatFn(messages as ChatMessage[]);
-          res.writeHead(200, { "content-type": "application/json" });
-          res.end(JSON.stringify(result));
-        } catch (err) {
-          res.writeHead(500, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: (err as Error).message }));
-        }
-        return;
-      }
-
-      if (req.method === "POST" && req.url === "/api/agent-turn") {
-        const chunks: Buffer[] = [];
-        for await (const chunk of req) chunks.push(chunk as Buffer);
-        const raw = Buffer.concat(chunks).toString("utf8");
-
-        let body: AgentTurnRequest;
-        try {
-          body = JSON.parse(raw) as AgentTurnRequest;
-        } catch {
-          res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: "invalid JSON body" }));
-          return;
-        }
-
-        if (typeof body.system !== "string" || !Array.isArray(body.messages) || !Array.isArray(body.tools)) {
-          res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: "system, messages, and tools fields are required" }));
-          return;
-        }
-
-        try {
-          const result = await handleAgentTurnFn(body);
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify(result));
         } catch (err) {
@@ -332,7 +293,7 @@ export function createServer(
 
       if (req.method === "GET") {
         const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-        const urlPath = pathname === "/" ? "/chat.html" : pathname === "/document" ? "/document.html" : pathname;
+        const urlPath = pathname === "/" ? "/chat.html" : pathname;
         if (await serveStatic(res, urlPath)) {
           return;
         }
@@ -348,7 +309,7 @@ export function createServer(
     }
   });
 
-  attachWebSocketServer(server, handleChatFn, handleAgentTurnFn);
+  attachWebSocketServer(server, handleChatFn);
   return server;
 }
 
@@ -362,6 +323,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const openwebuiAdminPassword = process.env.OPENWEBUI_ADMIN_PASSWORD;
   if (openwebuiAdminEmail && openwebuiAdminPassword) {
     startHealthMonitor({
+      madeUrl: process.env.MADE_URL ?? "http://made:8000",
+      openwebuiUrl: process.env.OPENWEBUI_URL ?? "http://open-webui:8080",
+      adminEmail: openwebuiAdminEmail,
+      adminPassword: openwebuiAdminPassword,
+    });
+    startProvisioningReconciler({
       madeUrl: process.env.MADE_URL ?? "http://made:8000",
       openwebuiUrl: process.env.OPENWEBUI_URL ?? "http://open-webui:8080",
       adminEmail: openwebuiAdminEmail,

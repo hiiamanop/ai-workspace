@@ -1,6 +1,5 @@
 import { decide as defaultDecide } from "./made-client.ts";
 import { availableCandidates as defaultAvailableCandidates, availableToolCandidates as defaultAvailableToolCandidates } from "./candidates.ts";
-import { complete as ollamaComplete, completeStream as ollamaCompleteStream } from "./providers/ollama-client.ts";
 import { complete as deepseekComplete, completeStream as deepseekCompleteStream } from "./providers/deepseek-client.ts";
 import { callWebSearch, type WebSearchResponse, type WebSearchResult } from "./mcp/searxng-client.ts";
 import { formatWebSearchResults } from "./web-search-format.ts";
@@ -50,11 +49,9 @@ const defaultDeps: ChatDeps = {
   availableCandidates: defaultAvailableCandidates,
   availableToolCandidates: defaultAvailableToolCandidates,
   completeByProvider: {
-    "ollama-local": ollamaComplete,
     deepseek: deepseekComplete,
   },
   completeStreamByProvider: {
-    "ollama-local": ollamaCompleteStream,
     deepseek: deepseekCompleteStream,
   },
   toolExecutors: {

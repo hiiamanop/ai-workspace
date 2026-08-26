@@ -11,6 +11,14 @@ COPY storage ./storage
 COPY policies ./policies
 COPY config ./config
 COPY experiments ./experiments
-RUN pip install --no-cache-dir .
+# CPU-only torch wheel — the default PyPI index resolves a CUDA build that's
+# an order of magnitude larger and useless in this (GPU-less) deployment.
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu .
+# Bake the complexity classifier's weights into the image so a container
+# start never depends on the network or eats a cold-download delay.
+RUN python -c "from core.complexity import warm_up; warm_up()"
+# Weights are already on disk from the RUN above — never let transformers
+# phone home to check for a newer revision at container startup.
+ENV HF_HUB_OFFLINE=1
 EXPOSE 8000
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

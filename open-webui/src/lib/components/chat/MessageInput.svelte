@@ -154,6 +154,11 @@
 	export let selectedSkillIds = [];
 	export let selectedFilterIds = [];
 
+	// "Auto" collapses selectedToolIds down to a single sentinel — show every
+	// real tool MADE could pick from instead of a count of 1.
+	$: autoToolsActive = (selectedToolIds ?? []).includes('auto');
+	$: autoToolNames = ($tools ?? []).map((t) => t.name);
+
 	export let imageGenerationEnabled = false;
 	export let webSearchEnabled = false;
 	export let codeInterpreterEnabled = false;
@@ -2040,9 +2045,15 @@
 										<div class="ml-1 flex gap-1.5 shrink-0">
 											{#if (selectedToolIds ?? []).length > 0}
 												<Tooltip
-													content={$i18n.t('{{COUNT}} Available Tools', {
-														COUNT: (selectedToolIds ?? []).length
-													})}
+													content={autoToolsActive
+														? autoToolNames.length > 0
+															? $i18n.t('Auto — MADE will choose from: {{TOOLS}}', {
+																	TOOLS: autoToolNames.join(', ')
+																})
+															: $i18n.t('Auto — MADE will choose the tools to use')
+														: $i18n.t('{{COUNT}} Available Tools', {
+																COUNT: (selectedToolIds ?? []).length
+															})}
 												>
 													<button
 														class="translate-y-[0.5px] px-1 flex gap-1 items-center text-gray-600 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg self-center transition"
@@ -2055,7 +2066,9 @@
 														<Wrench className="size-4" strokeWidth="1.75" />
 
 														<span class="text-sm">
-															{(selectedToolIds ?? []).length}
+															{autoToolsActive
+																? $i18n.t('Auto')
+																: (selectedToolIds ?? []).length}
 														</span>
 													</button>
 												</Tooltip>

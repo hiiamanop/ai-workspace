@@ -13,8 +13,33 @@ def make_filter():
     f.valves.MADE_URL = "http://made:8000"
     f.valves.OPENWEBUI_URL = "http://open-webui:8080"
     f.valves.OPENWEBUI_TOKEN = "test-token"
-    f.valves.CLASSIFIER_MODEL = "deepseek-v4-flash"
     return f
+
+
+TOOLS = [
+    {
+        "id": "web_search",
+        "meta": {
+            "manifest": {
+                "made_cost": "0",
+                "made_quality": "0.7",
+                "made_latency": "3000",
+                "made_business_risk": "0.2",
+            }
+        },
+    },
+    {
+        "id": "scrape",
+        "meta": {
+            "manifest": {
+                "made_cost": "0",
+                "made_quality": "0.7",
+                "made_latency": "6000",
+                "made_business_risk": "0.3",
+            }
+        },
+    },
+]
 
 
 BRAND_MODEL = {
@@ -98,10 +123,6 @@ def test_inlet_calls_made_and_substitutes_model_for_brand_selection():
                 payload={"items": [BRAND_MODEL] + TIER_MODELS, "total": 3},
             )
             m.post(
-                "http://open-webui:8080/api/chat/completions",
-                payload={"choices": [{"message": {"content": "high"}}]},
-            )
-            m.post(
                 "http://made:8000/decide",
                 payload={
                     "decision_id": "d1",
@@ -133,10 +154,6 @@ def test_inlet_falls_back_to_cheapest_qualifying_tier_when_made_unreachable():
                 "http://open-webui:8080/api/v1/models/list?page=1",
                 payload={"items": [BRAND_MODEL] + TIER_MODELS, "total": 3},
             )
-            m.post(
-                "http://open-webui:8080/api/chat/completions",
-                payload={"choices": [{"message": {"content": "low"}}]},
-            )
             m.post("http://made:8000/decide", exception=Exception("connection refused"))
             f = make_filter()
             body = {"model": "deepseek", "messages": [{"role": "user", "content": "hi"}]}
@@ -160,10 +177,6 @@ def test_inlet_sends_raw_cost_values_to_made_not_inverted():
             m.get(
                 "http://open-webui:8080/api/v1/models/list?page=1",
                 payload={"items": [BRAND_MODEL] + TIER_MODELS, "total": 3},
-            )
-            m.post(
-                "http://open-webui:8080/api/chat/completions",
-                payload={"choices": [{"message": {"content": "low"}}]},
             )
             # MADE receives flash's raw cost (0.0005) and pro's raw cost (0.003)
             # Since cost direction is minimize, MADE should select the cheapest: flash
@@ -303,10 +316,6 @@ def test_inlet_returns_unchanged_body_when_no_scored_candidates_exist():
                 "http://open-webui:8080/api/v1/models/list?page=1",
                 payload={"items": unscored_models, "total": 2},
             )
-            m.post(
-                "http://open-webui:8080/api/chat/completions",
-                payload={"choices": [{"message": {"content": "medium"}}]},
-            )
             # MADE request would fail; trigger fallback path
             m.post("http://made:8000/decide", exception=Exception("connection refused"))
 
@@ -323,5 +332,105 @@ def test_inlet_returns_unchanged_body_when_no_scored_candidates_exist():
             # body["model"] should remain unchanged since no fallback was found
             assert result["model"] == original_model
             assert result is body  # returned the same dict
+
+    asyncio.run(run())
+
+
+def test_inlet_routes_tools_via_made_when_auto_selected():
+    async def run():
+        with aioresponses() as m:
+            m.get("http://open-webui:8080/api/v1/tools/", payload=TOOLS)
+            m.post(
+                "http://made:8000/decide",
+                payload={
+                    "decision_id": "d1",
+                    "selected_candidate_id": None,
+                    "requires_human_approval": False,
+                    "ranking": [{"id": "web_search", "score": 0.9}],
+                    "excluded": [{"id": "scrape", "reason": "not needed"}],
+                    "technique_used": "topsis",
+                    "policy_version": "1",
+                },
+            )
+            f = make_filter()
+            body = {
+                "model": "deepseek-v4-flash",  # already a concrete tier — no model MADE call needed
+                "tool_ids": ["auto"],
+                "messages": [{"role": "user", "content": "search the web for nasi padang"}],
+            }
+
+            result = await f.inlet(body, __user__={"id": "u1"})
+
+            assert result["tool_ids"] == ["web_search"]
+
+    asyncio.run(run())
+
+
+def test_inlet_tool_routing_fails_closed_when_made_unreachable():
+    async def run():
+        with aioresponses() as m:
+            m.get("http://open-webui:8080/api/v1/tools/", payload=TOOLS)
+            m.post("http://made:8000/decide", exception=Exception("connection refused"))
+            f = make_filter()
+            body = {
+                "model": "deepseek-v4-flash",
+                "tool_ids": ["auto"],
+                "messages": [{"role": "user", "content": "hi"}],
+            }
+
+            result = await f.inlet(body, __user__={"id": "u1"})
+
+            assert result["tool_ids"] == []
+
+    asyncio.run(run())
+
+
+def test_inlet_leaves_tool_ids_untouched_when_auto_not_present():
+    async def run():
+        with aioresponses() as m:
+            f = make_filter()
+            body = {
+                "model": "deepseek-v4-flash",
+                "tool_ids": ["web_search"],
+                "messages": [{"role": "user", "content": "hi"}],
+            }
+
+            result = await f.inlet(body, __user__={"id": "u1"})
+
+            # No requests should have been made for tool routing.
+            assert result["tool_ids"] == ["web_search"]
+
+    asyncio.run(run())
+
+
+def test_classify_complexity_calls_made_classify_not_an_llm():
+    async def run():
+        with aioresponses() as m:
+            m.post(
+                "http://made:8000/classify",
+                payload={"complexity": "high", "label": "COMPLEX", "score": 0.93},
+            )
+            f = make_filter()
+
+            result = await f._classify_complexity(
+                {"messages": [{"role": "user", "content": "prove the halting problem is undecidable"}]}
+            )
+
+            assert result == "high"
+            posted = list(m.requests.values())[0][0].kwargs["json"]
+            assert posted == {"text": "prove the halting problem is undecidable"}
+
+    asyncio.run(run())
+
+
+def test_classify_complexity_defaults_to_medium_when_made_unreachable():
+    async def run():
+        with aioresponses() as m:
+            m.post("http://made:8000/classify", exception=Exception("connection refused"))
+            f = make_filter()
+
+            result = await f._classify_complexity({"messages": [{"role": "user", "content": "hi"}]})
+
+            assert result == "medium"
 
     asyncio.run(run())

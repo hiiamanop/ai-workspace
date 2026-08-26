@@ -252,18 +252,6 @@
 								</span>
 							</a>
 						{/if}
-
-						<a
-							draggable="false"
-							aria-current={activeWorkspaceSection === 'documents' ? 'page' : null}
-							class="min-w-fit px-1 text-sm inline-flex items-center gap-1 {activeWorkspaceSection ===
-							'documents'
-								? 'text-gray-900 dark:text-gray-100'
-								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
-							href="/workspace/documents"
-						>
-							<span>{$i18n.t('Documents')}</span>
-						</a>
 					</div>
 
 					<div class="ml-auto flex shrink-0 items-center gap-1">
