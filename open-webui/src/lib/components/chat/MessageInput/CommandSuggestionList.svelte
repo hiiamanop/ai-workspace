@@ -170,6 +170,16 @@
 								type: 'web',
 								data: data
 							});
+						} else if (type === 'skill') {
+							command({
+								id: `${data.id}|${data.name}`,
+								label: data.name
+							});
+
+							onSelect({
+								type: 'skill',
+								data: data
+							});
 						}
 					}}
 				/>

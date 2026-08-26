@@ -6,9 +6,11 @@
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 	import { getFolders } from '$lib/apis/folders';
 	import { searchKnowledgeBases, searchKnowledgeFiles } from '$lib/apis/knowledge';
+	import { getSkillItems } from '$lib/apis/skills';
 	import { decodeString, isValidHttpUrl, isYoutubeUrl } from '$lib/utils';
 
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import Cube from '$lib/components/icons/Cube.svelte';
 	import Database from '$lib/components/icons/Database.svelte';
 	import DocumentPage from '$lib/components/icons/DocumentPage.svelte';
 	import Folder from '$lib/components/icons/Folder.svelte';
@@ -31,6 +33,7 @@
 	let modelItems: any[] = [];
 	let filteredModels: any[] = [];
 	let knowledgeResults: any[] = [];
+	let skillItems: any[] = [];
 
 	$: modelItems = (($models ?? []) as any[])
 		.filter((model) => !model?.info?.meta?.hidden)
@@ -60,7 +63,8 @@
 
 	$: filteredItems = [
 		...knowledgeResults.map((data) => ({ type: data.type, data })),
-		...filteredModels.map((data) => ({ type: 'model', data }))
+		...filteredModels.map((data) => ({ type: 'model', data })),
+		...skillItems.map((data) => ({ type: 'skill', data }))
 	];
 
 	$: if (query) {
@@ -84,6 +88,12 @@
 		getFolderItems();
 		getKnowledgeItems();
 		getKnowledgeFileItems();
+		getSkillListItems();
+	};
+
+	const getSkillListItems = async () => {
+		const res = await getSkillItems(localStorage.token, query).catch(() => null);
+		skillItems = res?.items ?? [];
 	};
 
 	const getFolderItems = () => {
@@ -150,6 +160,8 @@
 
 		if (item.type === 'model') {
 			onSelect({ type: 'model', data: item.data });
+		} else if (item.type === 'skill') {
+			onSelect({ type: 'skill', data: item.data });
 		} else {
 			selectKnowledgeItem(item.data);
 		}
@@ -265,6 +277,39 @@
 					/>
 					<div class="min-w-0 truncate">
 						{model.name}
+					</div>
+				</div>
+			</button>
+		</Tooltip>
+	{/each}
+{/if}
+
+{#if skillItems.length > 0}
+	<div class="px-2 py-1 text-[11px] text-gray-500 dark:text-gray-400">
+		{$i18n.t('Skills')}
+	</div>
+
+	{#each skillItems as skill, skillIdx}
+		{@const itemIdx = knowledgeResults.length + filteredModels.length + skillIdx}
+		<Tooltip content={skill.description ?? skill.name} placement="top-start">
+			<button
+				class="flex h-[1.6875rem] w-full items-center rounded-xl px-2 text-left text-[13px] hover:bg-gray-50/40 dark:hover:bg-gray-800/40 {itemIdx ===
+				selectedIdx
+					? 'bg-gray-50/40 dark:bg-gray-800/40 selected-command-option-button'
+					: ''}"
+				type="button"
+				on:click={() => {
+					onSelect({ type: 'skill', data: skill });
+				}}
+				on:mousemove={() => {
+					selectedIdx = itemIdx;
+				}}
+				data-selected={itemIdx === selectedIdx}
+			>
+				<div class="flex min-w-0 items-center gap-1.5 text-black dark:text-gray-100">
+					<Cube className="size-3.5" />
+					<div class="min-w-0 truncate">
+						{skill.name}
 					</div>
 				</div>
 			</button>
