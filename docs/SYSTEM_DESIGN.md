@@ -16,7 +16,6 @@ overall [[docs/PRD.md]] direction), [[docs/SCHEMA.md]] for exact shapes.
                          │    detectors.py  (regex +  │   │
                          │                   spaCy NER)│   │
                          │    pseudonymizer.py ───────┼───┼──▶ storage: EntityMapping
-                         │    vector_store.py ─────────┼───┼──▶ Qdrant (docker service)
                          │                              │   │
                          │  POST /decide (existing) ────┼───┤
                          │    core/decision/engine.py   │   │
@@ -32,7 +31,7 @@ overall [[docs/PRD.md]] direction), [[docs/SCHEMA.md]] for exact shapes.
 rego policies, storage/db.py's SQLite engine) already exists and is reused,
 not rebuilt.
 
-## Request flow (once callers are wired — Phase 3+)
+## Request flow (once callers are wired — Phase 3)
 
 1. Caller has an outgoing message that may contain confidential content.
 2. Caller calls `POST /privacy/redact {org_id, text}`. MADE detects spans
@@ -53,18 +52,6 @@ not rebuilt.
    `POST /privacy/restore {org_id, text}` before showing/streaming it to the
    user; MADE substitutes originals back in.
 
-## RAG flow
-
-- Ingestion: `POST /privacy/rag/ingest {org_id, source, text, classification}`
-  — MADE redacts, embeds the *redacted* text, upserts into Qdrant with
-  payload metadata (`org_id`, `source`, `classification`, `content_hash`).
-  Raw confidential text is never embedded or stored outside the encrypted
-  `EntityMapping` table.
-- Retrieval: `POST /privacy/rag/query {org_id, query, top_k}` — embeds the
-  query, searches Qdrant, returns already-redacted snippets. A caller can
-  forward these directly into a model prompt without further processing —
-  they're safe by construction.
-
 ## Enforcement boundary
 
 The rego deny rule is the actual gate, not the redaction call itself — a
@@ -74,7 +61,7 @@ external vendor, the same way `context.rego` denies candidates whose context
 window is too small today. Redaction is how a caller satisfies the gate, not
 a courtesy step a caller could bypass.
 
-## Where this doesn't reach yet (Phase 3+, not built in this iteration)
+## Where this doesn't reach yet (Phase 3, not built in this iteration)
 
 - `src/chat.ts` still hardcodes `data_classification: "internal"` and never
   calls `/privacy/*`. Confidential-marked requests from this app's own chat
@@ -83,5 +70,6 @@ a courtesy step a caller could bypass.
   this Node app), so it needs its own Filter (`inlet`/`outlet`, same shape as
   `openwebui-filters/made_routing.py`) calling `/privacy/redact` and
   `/privacy/restore`. Not built in this iteration.
-- `web_search`/`scrape` tool results are still inlined into prompts raw; the
-  RAG ingest/query endpoints exist but nothing calls them yet.
+
+No vector store / RAG-over-confidential-documents is planned here — see
+[[docs/PRD-confidentiality-pipeline.md]]'s "No vector store" note.

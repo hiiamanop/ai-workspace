@@ -76,5 +76,8 @@ phases in [[docs/PRD-confidentiality-pipeline.md]].
 - [[docs/PRD-confidentiality-pipeline.md]] — current work in detail.
 - [[docs/SYSTEM_DESIGN.md]], [[docs/SCHEMA.md]] — confidentiality pipeline
   design and shapes.
+- [[docs/PRD-openwebui-integrations.md]] — survey of what else in Open
+  WebUI (Knowledge/RAG, image/audio engines, terminal servers, pipelines)
+  fits or doesn't fit the MADE-governance pattern.
 - Repo's own `CLAUDE.md` — architecture reference and command list, kept
   current as the source of truth for "how do I run this."

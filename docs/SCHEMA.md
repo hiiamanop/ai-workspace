@@ -27,26 +27,8 @@ using the encrypted column purely for restore. Add:
 
 Unique constraint: `(org_id, original_value_hash)`.
 
-## Qdrant collection
-
-One collection, e.g. `made_rag`. Vector size/distance depends on the chosen
-embedding model (pick one already reachable — e.g. reuse whatever the
-`CLASSIFIER_MODEL`/DeepSeek embeddings endpoint provides, or a small local
-sentence-transformers model; decide at implementation time, not in this
-doc). Payload per point:
-
-```json
-{
-  "org_id": "string",
-  "source": "string",
-  "classification": "public | internal | confidential | restricted",
-  "content_hash": "sha256 hex of the redacted text (dedupe key)",
-  "redacted_text": "string (already safe to forward to a model)"
-}
-```
-
-Raw (pre-redaction) text is never stored in Qdrant — only the redacted text
-and metadata.
+No vector store — see [[docs/PRD-confidentiality-pipeline.md]]'s "No vector
+store" note. Redaction is pure text processing against the SQL table above.
 
 ## API shapes (`MADE/api/schemas.py`, `MADE/api/main.py`)
 
@@ -58,14 +40,6 @@ POST /privacy/redact
 POST /privacy/restore
   in:  { org_id: str, text: str }
   out: { restored_text: str }
-
-POST /privacy/rag/ingest
-  in:  { org_id: str, source: str, text: str, classification: DataClassification }
-  out: { document_id: str }
-
-POST /privacy/rag/query
-  in:  { org_id: str, query: str, top_k: int = 5 }
-  out: { results: [{ document_id: str, score: float, redacted_text: str, source: str }] }
 ```
 
 ## `TaskIn`/`Task` addition (existing schema, one new field)

@@ -20,9 +20,19 @@ deny lists don't cover the vendor actually in use (DeepSeek).
 Move the confidentiality guarantee from "which vendor" to "what data" —
 confidential/restricted content gets redacted (structured PII + named
 entities replaced with stable placeholders) before it can reach an external
-vendor, and restored in the response. RAG/knowledge content that is
-confidential is stored and retrieved as vectors, never forwarded to an
-external model as raw text.
+vendor, and restored in the response.
+
+**No vector store in this PRD.** Redaction (detect → placeholder → restore)
+is pure text processing — it needs a SQL table for the entity mapping, not
+a vector DB. A vector store would only matter for a *separate*, not-yet-
+requested feature (RAG over confidential documents), and even then Open
+WebUI already has its own native Knowledge/RAG (`VECTOR_DB` — Chroma by
+default, also pgvector/mariadb-vector/oracle23ai). Standing up a second
+vector store (originally planned as Qdrant) was speculative — decided to
+drop it from scope entirely rather than build it ahead of a real need. See
+[[docs/PRD-openwebui-integrations.md]] for the full survey this decision
+came from. If confidential-document RAG becomes a real requirement later,
+revisit then — as its own scoped piece of work, not bundled into redaction.
 
 ## Non-goals (this iteration)
 
@@ -33,6 +43,9 @@ external model as raw text.
 - Automatic classification of arbitrary free text into
   public/internal/confidential/restricted — classification is still supplied
   by the caller; this iteration only makes the *enforcement* real.
+- A vector store / RAG-over-confidential-documents — dropped from scope
+  entirely (not deferred to a later phase here); see the "No vector store"
+  note above.
 
 ## Success criteria
 
@@ -44,9 +57,6 @@ external model as raw text.
   persistent and reused, not re-randomized per call).
 - MADE's hard constraints deny confidential/restricted data_classification
   for external vendors (DeepSeek included) unless `task.redacted == true`.
-- RAG documents can be ingested into and queried from a vector store
-  (Qdrant) without their raw confidential text ever being required by a
-  caller outside MADE.
 
 ## Task breakdown
 
@@ -73,48 +83,30 @@ phase numbering.
 - 1.6 (S) pytest: redact/restore round-trip, mapping stability across
   repeated calls with the same input.
 
-**Phase 2 — Vector store**
-- 2.1 (S) `qdrant` service in `docker-compose.yaml` — official prebuilt
-  image, no build/compile step (unlike the spaCy scare that broke the
-  `made` image build earlier this session — Qdrant carries no such risk).
-- 2.2 (M) `MADE/core/privacy/vector_store.py` — `qdrant-client` wrapper
-  (`upsert_document`, `query_similar`), collection auto-created on startup.
-- 2.3 (M) `POST /privacy/rag/ingest` / `POST /privacy/rag/query`. Embedding
-  model: local `sentence-transformers` (`all-MiniLM-L6-v2`) running inside
-  MADE — no external API call just to embed text, consistent with MADE
-  being the boundary that holds sensitive data (decided; add
-  `sentence-transformers` to `MADE/pyproject.toml`).
-
-**Phase 3 — Policy tightening**
-- 3.1 (S) Add `redacted: bool = False` to `TaskIn`/`Task`
+**Phase 2 — Policy tightening**
+- 2.1 (S) Add `redacted: bool = False` to `TaskIn`/`Task`
   (`MADE/api/schemas.py`, `core/decision/engine.py`). Update
   `compliance.rego` (or a new `external_vendor.rego`) to deny
   confidential/restricted `data_classification` for external vendors
   (`deepseek` included, not just `unverified-oss`) unless `redacted: true`.
-- 3.2 (S) Matching `_test.rego` cases, `opa test policies/hard/`.
+- 2.2 (S) Matching `_test.rego` cases, `opa test policies/hard/`.
 
-**Phase 4 — Wire the primary caller (Open WebUI)**
+**Phase 3 — Wire the primary caller (Open WebUI)**
 This is where the guarantee actually starts protecting real traffic — Open
 WebUI's chat path talks to DeepSeek directly and never touches this Node
-app, so Phases 1-3 alone protect nothing yet.
-- 4.1 (M) `openwebui-filters/confidential_redaction.py` — same
+app, so Phases 1-2 alone protect nothing yet.
+- 3.1 (M) `openwebui-filters/confidential_redaction.py` — same
   `inlet`/`outlet` shape as `made_routing.py` (built and verified working
   this session): `inlet` calls `/privacy/redact` on `body["messages"]`,
   `outlet` calls `/privacy/restore` on the reply.
-- 4.2 (S) `src/openwebui-provision-redaction.ts` — provisioning script
+- 3.2 (S) `src/openwebui-provision-redaction.ts` — provisioning script
   mirroring `openwebui-provision.ts`. **Slots directly into the
   provisioning reconciler already built this session**
   (`src/openwebui-provisioning-reconciler.ts`) — add one more
   `provisionRedactionFilter()` call there and it gets auto-reconciled for
   free, no new infrastructure needed.
-- 4.3 (S) `src/chat.ts` — same redact/restore calls, lower priority since
+- 3.3 (S) `src/chat.ts` — same redact/restore calls, lower priority since
   Open WebUI is the primary surface, not this app's own chat page.
-
-**Phase 5 — RAG ingestion from existing tools**
-- 5.1 (M) Route `web_search`/`scrape` results through
-  `/privacy/rag/ingest` instead of inlining raw results into the prompt;
-  retrieval at answer-time via `/privacy/rag/query` returns only
-  already-redacted snippets.
 
 ## Related docs
 
