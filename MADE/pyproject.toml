@@ -14,6 +14,8 @@ dependencies = [
     "scipy>=1.13",
     "torch>=2.13",
     "transformers>=4.44",
+    "spacy>=3.8",
+    "cryptography>=43.0",
 ]
 
 [project.optional-dependencies]
@@ -29,4 +31,4 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["core", "core.experiment", "core.decision", "core.epm", "core.modm", "api", "storage", "experiments"]
+packages = ["core", "core.experiment", "core.decision", "core.epm", "core.modm", "core.privacy", "api", "storage", "experiments"]
