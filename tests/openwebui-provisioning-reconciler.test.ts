@@ -10,9 +10,10 @@ const baseDeps = {
   mintApiKeyFn: async () => ({ ok: true as const, apiKey: "shared-key" }),
 };
 
-test("reconcileOnce() mints one shared key and calls both provisioners with it", async () => {
+test("reconcileOnce() mints one shared key and calls all provisioners with it", async () => {
   const filterCalls: unknown[] = [];
   const toolsCalls: unknown[] = [];
+  const contentCalls: unknown[] = [];
 
   await reconcileOnce({
     ...baseDeps,
@@ -24,14 +25,21 @@ test("reconcileOnce() mints one shared key and calls both provisioners with it",
       toolsCalls.push(deps);
       return { ok: true, actions: [] };
     },
+    provisionContentFn: async (deps) => {
+      contentCalls.push(deps);
+      return { ok: true, actions: [] };
+    },
   });
 
   assert.equal(filterCalls.length, 1);
   assert.equal(toolsCalls.length, 1);
+  assert.equal(contentCalls.length, 1);
   assert.equal((filterCalls[0] as { openwebuiUrl: string }).openwebuiUrl, "http://open-webui:8080");
   assert.equal((toolsCalls[0] as { openwebuiUrl: string }).openwebuiUrl, "http://open-webui:8080");
+  assert.equal((contentCalls[0] as { openwebuiUrl: string }).openwebuiUrl, "http://open-webui:8080");
   assert.equal((filterCalls[0] as { openwebuiToken: string }).openwebuiToken, "shared-key");
   assert.equal((toolsCalls[0] as { openwebuiToken: string }).openwebuiToken, "shared-key");
+  assert.equal((contentCalls[0] as { openwebuiToken: string }).openwebuiToken, "shared-key");
 });
 
 test("reconcileOnce() resolves false (not throw) when a provisioner reports failure", async () => {
@@ -39,22 +47,25 @@ test("reconcileOnce() resolves false (not throw) when a provisioner reports fail
     ...baseDeps,
     provisionFilterFn: async () => ({ ok: false, error: "signin failed" }),
     provisionToolsFn: async () => ({ ok: false, error: "signin failed", actions: [] }),
+    provisionContentFn: async () => ({ ok: false, error: "signin failed", actions: [] }),
   });
   assert.equal(ok, false);
 });
 
-test("reconcileOnce() resolves true when both provisioners succeed", async () => {
+test("reconcileOnce() resolves true when all provisioners succeed", async () => {
   const ok = await reconcileOnce({
     ...baseDeps,
     provisionFilterFn: async () => ({ ok: true }),
     provisionToolsFn: async () => ({ ok: true, actions: [] }),
+    provisionContentFn: async () => ({ ok: true, actions: [] }),
   });
   assert.equal(ok, true);
 });
 
-test("reconcileOnce() resolves false when minting the shared key fails, without calling either provisioner", async () => {
+test("reconcileOnce() resolves false when minting the shared key fails, without calling any provisioner", async () => {
   const filterCalls: unknown[] = [];
   const toolsCalls: unknown[] = [];
+  const contentCalls: unknown[] = [];
 
   const ok = await reconcileOnce({
     ...baseDeps,
@@ -67,9 +78,14 @@ test("reconcileOnce() resolves false when minting the shared key fails, without 
       toolsCalls.push(deps);
       return { ok: true, actions: [] };
     },
+    provisionContentFn: async (deps) => {
+      contentCalls.push(deps);
+      return { ok: true, actions: [] };
+    },
   });
 
   assert.equal(ok, false);
   assert.equal(filterCalls.length, 0);
   assert.equal(toolsCalls.length, 0);
+  assert.equal(contentCalls.length, 0);
 });

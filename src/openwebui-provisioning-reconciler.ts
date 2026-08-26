@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { mintApiKey } from "./openwebui-auth.ts";
 import { provisionFilter } from "./openwebui-provision.ts";
 import { provisionTools } from "./openwebui-provision-tools.ts";
+import { provisionContent } from "./openwebui-provision-content.ts";
 
 // Runs the same provisioning src/openwebui-provision*.ts's CLI entry points do,
 // on an interval instead of requiring a manual re-run after every fresh volume
@@ -18,6 +19,7 @@ export interface ProvisioningReconcilerDeps {
   mintApiKeyFn?: typeof mintApiKey;
   provisionFilterFn?: typeof provisionFilter;
   provisionToolsFn?: typeof provisionTools;
+  provisionContentFn?: typeof provisionContent;
 }
 
 export async function reconcileOnce(deps: ProvisioningReconcilerDeps): Promise<boolean> {
@@ -60,7 +62,20 @@ export async function reconcileOnce(deps: ProvisioningReconcilerDeps): Promise<b
     console.error(`provisioning reconciler: Tools provisioning failed: ${toolsResult.error}`);
   }
 
-  return filterResult.ok && toolsResult.ok;
+  // Prompts/Skills need no valves and only a verified-user token (the shared
+  // minted key works — get_current_user accepts sk- API keys), so reuse the
+  // same token instead of signing in a third time this cycle.
+  const contentResult = await (deps.provisionContentFn ?? provisionContent)({
+    openwebuiUrl: deps.openwebuiUrl,
+    adminEmail: deps.adminEmail,
+    adminPassword: deps.adminPassword,
+    openwebuiToken,
+  });
+  if (!contentResult.ok) {
+    console.error(`provisioning reconciler: Content provisioning failed: ${contentResult.error}`);
+  }
+
+  return filterResult.ok && toolsResult.ok && contentResult.ok;
 }
 
 export function startProvisioningReconciler(deps: ProvisioningReconcilerDeps): { stop(): void } {
