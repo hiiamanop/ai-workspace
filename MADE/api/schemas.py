@@ -62,6 +62,25 @@ class ClassifyResponse(BaseModel):
     score: float
 
 
+class RedactRequest(BaseModel):
+    org_id: str
+    text: str
+
+
+class RedactResponse(BaseModel):
+    redacted_text: str
+    redaction_count: int
+
+
+class RestoreRequest(BaseModel):
+    org_id: str
+    text: str
+
+
+class RestoreResponse(BaseModel):
+    restored_text: str
+
+
 class PolicyDeployRequest(BaseModel):
     policy_id: str
     rego_content: str

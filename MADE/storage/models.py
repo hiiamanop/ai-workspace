@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 
 class DecisionRecord(SQLModel, table=True):
@@ -26,6 +26,19 @@ class ScoreCacheRecord(SQLModel, table=True):
     business_risk: float
     raw_response: str
     judge_raw: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class EntityMapping(SQLModel, table=True):
+    __tablename__ = "entity_mappings"
+    __table_args__ = (UniqueConstraint("org_id", "original_value_hash", name="uq_entity_mapping_org_hash"),)
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    org_id: str = Field(index=True)
+    entity_type: str
+    placeholder: str
+    original_value_hash: str
+    original_value_encrypted: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

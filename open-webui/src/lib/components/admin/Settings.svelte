@@ -147,18 +147,25 @@
 				'export'
 			]
 		},
-		{
-			id: 'subagents',
-			title: 'Sub-agents',
-			route: '/admin/settings/subagents',
-			keywords: ['sub-agents', 'subagents', 'delegation', 'background', 'agents']
-		},
-		{
-			id: 'evaluations',
-			title: 'Evaluations',
-			route: '/admin/settings/evaluations',
-			keywords: ['evaluations', 'feedback', 'rating', 'arena', 'leaderboard', 'preference']
-		},
+		// ai-workspace: hidden from the Admin Settings sidebar — unused in this
+		// deployment. Uncomment to bring back; nothing else references these
+		// entries so removing them from allSettings is enough.
+		// Sub-agents: delegation/background agents — build as a Tool instead
+		// if this is ever needed (see src/openwebui-provision-tools.ts),
+		// not via this native feature.
+		// {
+		// 	id: 'subagents',
+		// 	title: 'Sub-agents',
+		// 	route: '/admin/settings/subagents',
+		// 	keywords: ['sub-agents', 'subagents', 'delegation', 'background', 'agents']
+		// },
+		// Evaluations: arena/rating/leaderboard — unused.
+		// {
+		// 	id: 'evaluations',
+		// 	title: 'Evaluations',
+		// 	route: '/admin/settings/evaluations',
+		// 	keywords: ['evaluations', 'feedback', 'rating', 'arena', 'leaderboard', 'preference']
+		// },
 		{
 			id: 'analytics',
 			title: 'Analytics',
@@ -207,33 +214,38 @@
 				'unstructured'
 			]
 		},
-		{
-			id: 'web',
-			title: 'Web Search',
-			route: '/admin/settings/web',
-			keywords: [
-				'web search',
-				'google',
-				'bing',
-				'duckduckgo',
-				'serp',
-				'searxng',
-				'moojeh',
-				'yacy',
-				'serper',
-				'serply',
-				'tavily',
-				'exa',
-				'perplexity',
-				'firecrawl'
-			]
-		},
-		{
-			id: 'code-execution',
-			title: 'Code Execution',
-			route: '/admin/settings/code-execution',
-			keywords: ['code execution', 'python', 'sandbox', 'compiler', 'jupyter', 'interpreter']
-		},
+		// Web Search: Open WebUI's own native web search — distinct from and
+		// superseded by our own `web_search` Tool (SearXNG, MADE-governed via
+		// src/openwebui-provision-tools.ts). Keeping both visible invites
+		// confusion between two different "web search" features.
+		// {
+		// 	id: 'web',
+		// 	title: 'Web Search',
+		// 	route: '/admin/settings/web',
+		// 	keywords: [
+		// 		'web search',
+		// 		'google',
+		// 		'bing',
+		// 		'duckduckgo',
+		// 		'serp',
+		// 		'searxng',
+		// 		'moojeh',
+		// 		'yacy',
+		// 		'serper',
+		// 		'serply',
+		// 		'tavily',
+		// 		'exa',
+		// 		'perplexity',
+		// 		'firecrawl'
+		// 	]
+		// },
+		// Code Execution: sandbox — not configured, not used.
+		// {
+		// 	id: 'code-execution',
+		// 	title: 'Code Execution',
+		// 	route: '/admin/settings/code-execution',
+		// 	keywords: ['code execution', 'python', 'sandbox', 'compiler', 'jupyter', 'interpreter']
+		// },
 		{
 			id: 'interface',
 			title: 'Interface',
@@ -249,23 +261,24 @@
 				'tags'
 			]
 		},
-		{
-			id: 'audio',
-			title: 'Audio',
-			route: '/admin/settings/audio',
-			keywords: [
-				'audio',
-				'voice',
-				'speech',
-				'tts',
-				'stt',
-				'whisper',
-				'deepgram',
-				'azure',
-				'openai',
-				'elevenlabs'
-			]
-		},
+		// Audio: STT/TTS — not configured, not used.
+		// {
+		// 	id: 'audio',
+		// 	title: 'Audio',
+		// 	route: '/admin/settings/audio',
+		// 	keywords: [
+		// 		'audio',
+		// 		'voice',
+		// 		'speech',
+		// 		'tts',
+		// 		'stt',
+		// 		'whisper',
+		// 		'deepgram',
+		// 		'azure',
+		// 		'openai',
+		// 		'elevenlabs'
+		// 	]
+		// },
 		{
 			id: 'images',
 			title: 'Images',
@@ -280,12 +293,14 @@
 				'gemini'
 			]
 		},
-		{
-			id: 'pipelines',
-			title: 'Pipelines',
-			route: '/admin/settings/pipelines',
-			keywords: ['pipelines', 'workflows', 'filters', 'valves', 'middleware']
-		},
+		// Pipelines: separate plugin framework — we use Filters/Tools directly
+		// (made_routing.py, src/openwebui-provision-tools.ts) instead.
+		// {
+		// 	id: 'pipelines',
+		// 	title: 'Pipelines',
+		// 	route: '/admin/settings/pipelines',
+		// 	keywords: ['pipelines', 'workflows', 'filters', 'valves', 'middleware']
+		// },
 		{
 			id: 'db',
 			title: 'Database',

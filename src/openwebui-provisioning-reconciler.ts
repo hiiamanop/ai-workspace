@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { mintApiKey } from "./openwebui-auth.ts";
 import { provisionFilter } from "./openwebui-provision.ts";
 import { provisionTools } from "./openwebui-provision-tools.ts";
 
@@ -14,6 +15,7 @@ export interface ProvisioningReconcilerDeps {
   adminPassword: string;
   intervalMs?: number;
   retryIntervalMs?: number;
+  mintApiKeyFn?: typeof mintApiKey;
   provisionFilterFn?: typeof provisionFilter;
   provisionToolsFn?: typeof provisionTools;
 }
@@ -21,12 +23,28 @@ export interface ProvisioningReconcilerDeps {
 export async function reconcileOnce(deps: ProvisioningReconcilerDeps): Promise<boolean> {
   const filterSourcePath = fileURLToPath(new URL("../openwebui-filters/made_routing.py", import.meta.url));
 
+  // Open WebUI holds exactly one API key per user — mint once here and
+  // share it with both provisioners. Letting each mint its own would have
+  // the second call silently invalidate the key the first one just set
+  // (see openwebui-auth.ts).
+  const minted = await (deps.mintApiKeyFn ?? mintApiKey)({
+    openwebuiUrl: deps.openwebuiUrl,
+    adminEmail: deps.adminEmail,
+    adminPassword: deps.adminPassword,
+  });
+  if (!minted.ok || !minted.apiKey) {
+    console.error(`provisioning reconciler: failed to mint an Open WebUI API key: ${minted.error}`);
+    return false;
+  }
+  const openwebuiToken = minted.apiKey;
+
   const filterResult = await (deps.provisionFilterFn ?? provisionFilter)({
     openwebuiUrl: deps.openwebuiUrl,
     madeUrl: deps.madeUrl,
     adminEmail: deps.adminEmail,
     adminPassword: deps.adminPassword,
     filterSourcePath,
+    openwebuiToken,
   });
   if (!filterResult.ok) {
     console.error(`provisioning reconciler: Filter provisioning failed: ${filterResult.error}`);
@@ -36,6 +54,7 @@ export async function reconcileOnce(deps: ProvisioningReconcilerDeps): Promise<b
     openwebuiUrl: deps.openwebuiUrl,
     adminEmail: deps.adminEmail,
     adminPassword: deps.adminPassword,
+    openwebuiToken,
   });
   if (!toolsResult.ok) {
     console.error(`provisioning reconciler: Tools provisioning failed: ${toolsResult.error}`);
@@ -51,9 +70,10 @@ export function startProvisioningReconciler(deps: ProvisioningReconcilerDeps): {
   // accepting connections. Retry sooner than the steady-state interval
   // until the first success, but not so fast that failed retries alone
   // exhaust Open WebUI's own signin rate limit (15 requests per 3 minutes,
-  // per email — this cycle signs in twice, once per provisioner): a retry
-  // storm that keeps re-triggering that limit would make the outage worse,
-  // not better.
+  // per email — this cycle signs in 3 times: once to mint the shared API
+  // key, once each inside provisionFilter/provisionTools for their own
+  // management-API calls): a retry storm that keeps re-triggering that
+  // limit would make the outage worse, not better.
   const retryIntervalMs = deps.retryIntervalMs ?? 60_000;
 
   let stopped = false;

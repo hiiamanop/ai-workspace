@@ -20,6 +20,10 @@ from api.schemas import (
     ExperimentRunResponse,
     PolicyDeployRequest,
     RankingEntryOut,
+    RedactRequest,
+    RedactResponse,
+    RestoreRequest,
+    RestoreResponse,
 )
 import core.complexity as complexity
 from core.decision.engine import DecisionCandidate, Org, Task, decide
@@ -28,6 +32,8 @@ from core.epm.opa_client import OpaEvaluationError
 from core.experiment.config_loader import load_ahp_weights, load_candidates_config
 from core.experiment.harness import load_scenarios, run_experiment
 from core.experiment.metrics import compute_baseline_summary
+from core.privacy import pseudonymizer
+from core.privacy.detectors import warm_up_ner
 from storage.db import get_session, make_engine
 from storage.models import DecisionRecord
 
@@ -72,10 +78,29 @@ def warm_up_complexity_classifier() -> None:
     complexity.warm_up()
 
 
+@app.on_event("startup")
+def warm_up_ner_model() -> None:
+    warm_up_ner()
+
+
 @app.post("/classify", response_model=ClassifyResponse)
 def post_classify(request: ClassifyRequest) -> ClassifyResponse:
     complexity_level, label, score = complexity.classify(request.text)
     return ClassifyResponse(complexity=complexity_level, label=label, score=score)
+
+
+@app.post("/privacy/redact", response_model=RedactResponse)
+def post_privacy_redact(request: RedactRequest) -> RedactResponse:
+    with get_session(get_engine()) as session:
+        redacted_text, redaction_count = pseudonymizer.redact(request.text, request.org_id, session)
+    return RedactResponse(redacted_text=redacted_text, redaction_count=redaction_count)
+
+
+@app.post("/privacy/restore", response_model=RestoreResponse)
+def post_privacy_restore(request: RestoreRequest) -> RestoreResponse:
+    with get_session(get_engine()) as session:
+        restored_text = pseudonymizer.restore(request.text, request.org_id, session)
+    return RestoreResponse(restored_text=restored_text)
 
 
 @app.post("/decide", response_model=DecideResponse)

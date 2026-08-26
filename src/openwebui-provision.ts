@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { mintApiKey } from "./openwebui-auth.ts";
 
 export interface ProvisionDeps {
   openwebuiUrl: string;
@@ -7,6 +8,9 @@ export interface ProvisionDeps {
   adminEmail: string;
   adminPassword: string;
   filterSourcePath: string;
+  // Share a pre-minted key when provisioning more than one thing in the
+  // same run (see openwebui-auth.ts) — omit to mint one here standalone.
+  openwebuiToken?: string;
   fetchFn?: typeof fetch;
 }
 
@@ -30,31 +34,18 @@ export async function provisionFilter(deps: ProvisionDeps): Promise<ProvisionRes
   }
   const adminToken = signinBody.token;
 
-  // Create an API key for the Filter to use (long-lived, non-expiring)
-  const apiKeyRes = await fetchFn(`${deps.openwebuiUrl}/api/v1/auths/api_key`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${adminToken}` },
-  });
-  let openwebuiToken: string;
-  if (apiKeyRes.ok) {
-    const apiKeyBody = (await apiKeyRes.json()) as { api_key?: string };
-    if (apiKeyBody.api_key) {
-      openwebuiToken = apiKeyBody.api_key;
-    } else {
-      console.warn(
-        "API key creation succeeded but returned empty api_key field. Falling back to admin JWT. " +
-          "Provisioning should be re-run before the JWT expires (4 weeks)."
-      );
-      openwebuiToken = adminToken;
+  let openwebuiToken = deps.openwebuiToken;
+  if (!openwebuiToken) {
+    const minted = await mintApiKey({
+      openwebuiUrl: deps.openwebuiUrl,
+      adminEmail: deps.adminEmail,
+      adminPassword: deps.adminPassword,
+      fetchFn,
+    });
+    if (!minted.ok || !minted.apiKey) {
+      return { ok: false, error: minted.error ?? "failed to mint an Open WebUI API key" };
     }
-  } else {
-    console.warn(
-      `API key creation failed with status ${apiKeyRes.status}. Falling back to admin JWT. ` +
-        "Provisioning should be re-run before the JWT expires (4 weeks). " +
-        "Note: ENABLE_API_KEYS must be set to true in Open WebUI config."
-    );
-    // Fall back to the admin token if API key creation fails
-    openwebuiToken = adminToken;
+    openwebuiToken = minted.apiKey;
   }
 
   let content: string;

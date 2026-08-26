@@ -84,3 +84,39 @@ def detect(text: str) -> list[Span]:
 
     spans.sort(key=lambda s: s.start)
     return spans
+
+
+_NER_LABELS = {"PERSON", "ORG", "GPE"}
+_nlp = None
+
+
+def _get_nlp():
+    global _nlp
+    if _nlp is None:
+        import spacy
+
+        _nlp = spacy.load("en_core_web_sm")
+    return _nlp
+
+
+def warm_up_ner() -> None:
+    """Load the spaCy model now instead of on the first request."""
+    _get_nlp()
+
+
+def detect_all(text: str) -> list[Span]:
+    """Regex spans plus spaCy NER (PERSON/ORG/GPE) — regex wins on overlap."""
+    spans = detect(text)
+    claimed = [(s.start, s.end) for s in spans]
+
+    doc = _get_nlp()(text)
+    for ent in doc.ents:
+        if ent.label_ not in _NER_LABELS:
+            continue
+        if any(ent.start_char < end and start < ent.end_char for start, end in claimed):
+            continue
+        spans.append(Span(ent.start_char, ent.end_char, ent.label_, ent.text))
+        claimed.append((ent.start_char, ent.end_char))
+
+    spans.sort(key=lambda s: s.start)
+    return spans

@@ -5,6 +5,10 @@ services:
       - "127.0.0.1:3000:3000"
     env_file:
       - .env
+    environment:
+      - MEMORY_DB_PATH=/data/memory.db
+    volumes:
+      - app-data:/data
     depends_on:
       - searxng
       - scrapling
@@ -27,6 +31,8 @@ services:
     build: ./MADE
     ports:
       - "127.0.0.1:8001:8000"
+    env_file:
+      - .env
     environment:
       - MADE_DB_PATH=/data/made.db
     volumes:
@@ -46,3 +52,4 @@ services:
 volumes:
   open-webui-data:
   made-data:
+  app-data:

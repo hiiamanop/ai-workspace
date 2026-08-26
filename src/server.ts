@@ -8,6 +8,7 @@ import { handleChat } from "./chat.ts";
 import type { ChatMessage } from "./types.ts";
 import { callWebSearch, type WebSearchResponse } from "./mcp/searxng-client.ts";
 import { callScrape } from "./mcp/scrapling-client.ts";
+import { remember, recall, type MemoryEntry } from "./memory-store.ts";
 import { startHealthMonitor } from "./openwebui-health-monitor.ts";
 import { startProvisioningReconciler } from "./openwebui-provisioning-reconciler.ts";
 import { compilePolicy, CompileError } from "./openwebui-policy-compiler.ts";
@@ -161,7 +162,9 @@ function attachWebSocketServer(
 export function createServer(
   handleChatFn: typeof handleChat = handleChat,
   webSearchExecutorFn: (query: string, maxResults?: number) => Promise<WebSearchResponse> = callWebSearch,
-  scrapeExecutorFn: (url: string) => Promise<string> = callScrape
+  scrapeExecutorFn: (url: string) => Promise<string> = callScrape,
+  rememberFn: (userId: string, fact: string) => MemoryEntry = remember,
+  recallFn: (userId: string, query: string) => MemoryEntry[] = recall
 ): http.Server {
   const server = http.createServer(async (req, res) => {
     try {
@@ -252,6 +255,73 @@ export function createServer(
           const content = await scrapeExecutorFn(body.url);
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify({ content }));
+        } catch (err) {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: (err as Error).message }));
+        }
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/api/memory/remember") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const raw = Buffer.concat(chunks).toString("utf8");
+
+        let body: { user_id?: unknown; fact?: unknown };
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid JSON body" }));
+          return;
+        }
+
+        if (typeof body.user_id !== "string" || body.user_id.trim() === "") {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "user_id field is required" }));
+          return;
+        }
+        if (typeof body.fact !== "string" || body.fact.trim() === "") {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "fact field is required" }));
+          return;
+        }
+
+        try {
+          const entry = rememberFn(body.user_id, body.fact);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(entry));
+        } catch (err) {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: (err as Error).message }));
+        }
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/api/memory/recall") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const raw = Buffer.concat(chunks).toString("utf8");
+
+        let body: { user_id?: unknown; query?: unknown };
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid JSON body" }));
+          return;
+        }
+
+        if (typeof body.user_id !== "string" || body.user_id.trim() === "") {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "user_id field is required" }));
+          return;
+        }
+
+        try {
+          const entries = recallFn(body.user_id, typeof body.query === "string" ? body.query : "");
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ entries }));
         } catch (err) {
           res.writeHead(500, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: (err as Error).message }));

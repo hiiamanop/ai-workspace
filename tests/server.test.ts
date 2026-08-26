@@ -255,6 +255,90 @@ test("POST /api/scrape returns 500 with the error message when the scrape execut
   server.close();
 });
 
+test("POST /api/memory/remember stores a fact and returns it as JSON", async () => {
+  const calls: [string, string][] = [];
+  const server = createServer(
+    async () => ({ selectedCandidateId: "x", reply: "y", toolsUsed: [] }),
+    undefined,
+    undefined,
+    (userId: string, fact: string) => {
+      calls.push([userId, fact]);
+      return { id: 1, userId, fact, createdAt: "2026-01-01T00:00:00Z" };
+    }
+  );
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const res = await fetch(`http://localhost:${port}/api/memory/remember`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ user_id: "u1", fact: "likes coffee" }),
+  });
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(body, { id: 1, userId: "u1", fact: "likes coffee", createdAt: "2026-01-01T00:00:00Z" });
+  assert.deepEqual(calls, [["u1", "likes coffee"]]);
+  server.close();
+});
+
+test("POST /api/memory/remember with missing fields returns 400", async () => {
+  const server = createServer(async () => ({ selectedCandidateId: "x", reply: "y", toolsUsed: [] }));
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const res = await fetch(`http://localhost:${port}/api/memory/remember`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ user_id: "u1" }),
+  });
+
+  assert.equal(res.status, 400);
+  server.close();
+});
+
+test("POST /api/memory/recall returns matching entries as JSON", async () => {
+  const server = createServer(
+    async () => ({ selectedCandidateId: "x", reply: "y", toolsUsed: [] }),
+    undefined,
+    undefined,
+    undefined,
+    (userId: string, query: string) => [
+      { id: 1, userId, fact: `fact about ${query}`, createdAt: "2026-01-01T00:00:00Z" },
+    ]
+  );
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const res = await fetch(`http://localhost:${port}/api/memory/recall`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ user_id: "u1", query: "coffee" }),
+  });
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(body, {
+    entries: [{ id: 1, userId: "u1", fact: "fact about coffee", createdAt: "2026-01-01T00:00:00Z" }],
+  });
+  server.close();
+});
+
+test("POST /api/memory/recall with missing user_id returns 400", async () => {
+  const server = createServer(async () => ({ selectedCandidateId: "x", reply: "y", toolsUsed: [] }));
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+
+  const res = await fetch(`http://localhost:${port}/api/memory/recall`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query: "coffee" }),
+  });
+
+  assert.equal(res.status, 400);
+  server.close();
+});
+
 test("WS: resume replays buffered events after reconnecting with a new socket", async () => {
   let releaseSecondDelta: () => void = () => {};
   const gate = new Promise<void>((resolve) => {

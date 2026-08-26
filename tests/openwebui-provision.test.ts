@@ -217,3 +217,42 @@ test("provisionFilter() is idempotent: running it twice produces the same end st
   assert.equal(toggleActiveCalls, 1);
   assert.equal(toggleGlobalCalls, 1);
 });
+
+test("provisionFilter() uses a pre-minted openwebuiToken instead of minting its own", async () => {
+  let apiKeyCalls = 0;
+  const fakeFetch: typeof fetch = async (url, init) => {
+    const u = String(url);
+    if (u.endsWith("/api/v1/auths/signin")) {
+      return new Response(JSON.stringify({ token: "tok-123", role: "admin" }), { status: 200 });
+    }
+    if (u.endsWith("/api/v1/auths/api_key")) {
+      apiKeyCalls++;
+      return new Response(JSON.stringify({ api_key: "should-not-be-used" }), { status: 200 });
+    }
+    if (u.endsWith("/api/v1/functions/id/made_routing")) {
+      return new Response(JSON.stringify({ detail: "not found" }), { status: 404 });
+    }
+    if (u.endsWith("/api/v1/functions/create")) {
+      return new Response(JSON.stringify({ id: "made_routing", is_active: true, is_global: true }), { status: 200 });
+    }
+    if (u.endsWith("/valves/update")) {
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.OPENWEBUI_TOKEN, "pre-minted-key");
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+    throw new Error(`unexpected URL ${u}`);
+  };
+
+  const result = await provisionFilter({
+    openwebuiUrl: "http://open-webui:8080",
+    madeUrl: "http://made:8000",
+    adminEmail: "admin@example.com",
+    adminPassword: "pw",
+    filterSourcePath: new URL("../openwebui-filters/made_routing.py", import.meta.url).pathname,
+    openwebuiToken: "pre-minted-key",
+    fetchFn: fakeFetch,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(apiKeyCalls, 0, "should not mint its own key when one is supplied");
+});
