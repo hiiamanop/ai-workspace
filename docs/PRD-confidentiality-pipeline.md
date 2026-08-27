@@ -123,16 +123,20 @@ app, so Phases 1-2 alone protect nothing yet.
   `reconcileOnce()` in `src/openwebui-provisioning-reconciler.ts`. TS tests
   in `tests/openwebui-provision-redaction.test.ts` and updated
   `tests/openwebui-provisioning-reconciler.test.ts`.
-- 3.3 (S) deferred — `src/chat.ts` same redact/restore calls, lower
-  priority since Open WebUI is the primary surface, not this app's own
-  chat page.
+- 3.3 (S) ✅ done in the follow-up — `src/chat.ts` runs the same
+  classify → redact → decide → restore flow via `src/privacy-client.ts`.
+  See [[docs/PRD-confidentiality-automation.md]] Phase C.
 
-## Follow-up
+## Follow-up — [[docs/PRD-confidentiality-automation.md]] (shipped 2026-08-27)
 
-Phases 1–3 above are shipped. The pipeline still depends on a human/flag for
-classification and is English-only for detection —
-[[docs/PRD-confidentiality-automation.md]] closes that (auto-classification,
-Indonesian detectors, `chat.ts` wiring = the deferred 3.3, admin surface).
+Phases 1–3 made *enforcement* real but classification stayed manual/flag-based
+and detection was English-only. The follow-up closed that:
+- **auto-classification** — `POST /privacy/classify` (heuristic + cheap-LLM
+  tie-break), `restricted` for secrets (hard-blocked even when redacted).
+- **Indonesian detection** — NPWP/KK/plate/`08xx` regex + `cahya/bert-base-indonesian-NER`.
+- **`chat.ts` wired** (the deferred 3.3).
+- **redaction-leak detection** + **entity-mapping admin UI** (MADE endpoints →
+  Open WebUI admin router → workspace tab).
 
 ## Related docs
 

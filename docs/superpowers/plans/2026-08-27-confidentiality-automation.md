@@ -2,6 +2,12 @@
 
 PRD: [[docs/PRD-confidentiality-automation.md]].
 Design: [[docs/superpowers/specs/2026-08-27-confidentiality-automation-design.md]].
+Obsidian: [[Projects/ai-workspace/2026-08-27-confidentiality-automation]].
+
+**Status: all phases shipped 2026-08-27 (B1 → A → C → B2 → E → D).** Not yet
+committed. Remaining before merge: `cd open-webui && npm i && npm run check`
++ live admin click-through of the Redaction tab; one `docker compose up
+--build` end-to-end smoke.
 
 Execution order: **B1 → A → C → B2 → E → D**. Each phase merges on its own;
 `npm test`, `pytest` in `MADE/`, and `opa test MADE/policies/hard/` stay
@@ -99,7 +105,15 @@ proxy). Followed that — `src/privacy-routes.ts` was never built.
 
 ## Final (after all phases)
 
-- [ ] Repo `CLAUDE.md`: privacy subsection update (classify endpoint, `restricted`, Indonesian detectors, leak table, mapping tab); fix the stale "length heuristic" line.
-- [ ] Update [[docs/PRD-confidentiality-pipeline.md]] status line — Phase 3.3 now done (Phase C), plus a pointer to this follow-up.
-- [ ] Obsidian mirror: `Projects/MODE/` (MADE-side) + `Projects/ai-workspace/` (product-side) per both `CLAUDE.md`s.
-- [ ] `npm test` + `pytest MADE/` + `opa test MADE/policies/hard/` all green; one `docker compose up --build` smoke of the full flow.
+- [x] Repo `CLAUDE.md`: rewrote the privacy subsection (classify endpoint + heuristic, `restricted`, `SECRET`, Indonesian regex + NER, leak table, mapping admin tab, `chat.ts` now wired); fixed the stale "length heuristic" line (it's an HF `/classify` call).
+- [x] `docs/PRD-confidentiality-pipeline.md` — Phase 3.3 marked done, "Follow-up" section pointing at this work.
+- [x] Obsidian: `Projects/ai-workspace/2026-08-27-confidentiality-automation.md` (product-side, full write-up incl. bugs found) + `Projects/MODE/2026-08-27-privacy-classify-and-detectors.md` (MADE-side). NOTE: this machine's vault was empty — the "add a pointer line to the existing index note" step still needs doing wherever the real note graph lives.
+- [x] `npm test` 132/133 (1 pre-existing: `GET / serves the index page`, needs `npm run build`); `pytest MADE/tests/core/privacy + api/test_privacy` 48/48; full `pytest MADE/` 131/156 (25 pre-existing `opa eval` v1); `opa test --v0-compatible` 25/25; `openwebui-filters` 28/28; `npx tsc --noEmit` clean; MADE app boots with all 6 `/privacy/*` routes.
+- [ ] **Left for the user:** `cd open-webui && npm i && npm run check` + live admin click-through; `docker compose up --build` end-to-end smoke (needs real `.env` secrets; the MADE image build now also pulls the ~420 MB Indonesian NER checkpoint).
+
+## Pre-existing issue worth a separate fix
+
+`core/epm/opa_client.py` and `api/main.py`'s `deploy_policy` shell `opa` without
+`--v0-compatible`. Fine against the Docker-pinned `opa v0.67.0`, but breaks on
+any v1 OPA (25 test failures on a dev machine with current OPA). Either inject
+`--v0-compatible` or migrate `policies/hard/*.rego` to Rego v1 syntax.
