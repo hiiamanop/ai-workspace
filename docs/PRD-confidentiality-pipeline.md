@@ -127,9 +127,17 @@ app, so Phases 1-2 alone protect nothing yet.
   priority since Open WebUI is the primary surface, not this app's own
   chat page.
 
+## Follow-up
+
+Phases 1–3 above are shipped. The pipeline still depends on a human/flag for
+classification and is English-only for detection —
+[[docs/PRD-confidentiality-automation.md]] closes that (auto-classification,
+Indonesian detectors, `chat.ts` wiring = the deferred 3.3, admin surface).
+
 ## Related docs
 
 - [[docs/PRD.md]] — whole-app product direction; this is one pillar of it.
+- [[docs/PRD-confidentiality-automation.md]] — the follow-up work.
 - [[docs/SYSTEM_DESIGN.md]] — component/request-flow design.
 - [[docs/SCHEMA.md]] — new DB table and API request/response shapes.
 - Plan file for this work: `~/.claude/plans/wise-squishing-backus.md`.

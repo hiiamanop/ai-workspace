@@ -7,15 +7,27 @@ WebUI's own database. Editing the Function directly through its admin UI
 will be silently overwritten the next time the provisioning script runs.
 
 Cooperates with made_routing.py rather than replacing its hardcoded
-"internal" classification: when this Filter's inlet() actually redacts
-something, it sets body["_privacy"] = {"data_classification": "confidential",
-"redacted": True} on the request. made_routing.py reads that (falling back
-to "internal"/not-redacted when absent, so it still works standalone if
-this Filter isn't installed) and forwards it to MADE's /decide — that's
-what lets external_vendor.rego's deny rule actually engage. This Filter
-MUST run before made_routing.py for that signal to exist in time, which is
-why Valves.priority defaults to -10 (Open WebUI sorts filters ascending by
-priority, made_routing.py defaults to 0).
+"internal" classification. inlet() asks MADE's POST /privacy/classify to
+rate the combined user text (public/internal/confidential/restricted), then:
+  - always runs POST /privacy/redact on each user message (a stray PII span
+    should be pseudonymised regardless of the overall classification), and
+  - when the classification is confidential/restricted, sets
+    body["_privacy"] = {"data_classification": <that>, "redacted": <bool>}
+    EVEN IF nothing was redactable — sensitive prose with no detectable PII
+    still must not reach an external vendor unredacted. made_routing.py
+    reads _privacy (falling back to "internal"/not-redacted when absent, so
+    it still works standalone if this Filter isn't installed) and forwards
+    it to MADE's /decide — that's what lets external_vendor.rego /
+    restricted.rego actually engage.
+
+This Filter MUST run before made_routing.py for that signal to exist in
+time, which is why Valves.priority defaults to -10 (Open WebUI sorts
+filters ascending by priority, made_routing.py defaults to 0).
+
+If /privacy/classify is unreachable, inlet() degrades to redact-only (the
+pre-classifier behaviour): whatever /privacy/redact removes still sets
+_privacy confidential, anything it can't see slips through — no worse than
+before this endpoint existed.
 
 org_id for MADE's per-org entity-mapping scope (see
 core/privacy/pseudonymizer.py) is the requesting user's id (__user__.id) —
@@ -43,19 +55,29 @@ class Filter:
         # memory ever becomes a real concern.
         self._redact_cache: dict[tuple[str, str], tuple[str, int]] = {}
         self._restore_cache: dict[tuple[str, str], str] = {}
+        self._classify_cache: dict[tuple[str, str], str] = {}
 
     async def inlet(self, body: dict, __user__: dict = None) -> dict:
         org_id = (__user__ or {}).get("id") or "anonymous"
-        total_redactions = 0
 
-        for message in body.get("messages", []):
-            if message.get("role") != "user":
-                continue
-            content = message.get("content")
-            if not isinstance(content, str) or not content:
-                continue
+        user_messages = [
+            m for m in body.get("messages", [])
+            if m.get("role") == "user" and isinstance(m.get("content"), str) and m.get("content")
+        ]
+        if not user_messages:
+            return body
+
+        combined = "\n".join(m["content"] for m in user_messages)
+        try:
+            classification = await self._classify(org_id, combined)
+        except Exception as err:
+            print(f"confidential redaction: classify failed: {err}, degrading to redact-only")
+            classification = None
+
+        total_redactions = 0
+        for message in user_messages:
             try:
-                redacted_text, count = await self._redact(org_id, content)
+                redacted_text, count = await self._redact(org_id, message["content"])
             except Exception as err:
                 print(f"confidential redaction: redact failed: {err}, leaving message as-is")
                 continue
@@ -63,8 +85,16 @@ class Filter:
                 message["content"] = redacted_text
                 total_redactions += count
 
-        if total_redactions > 0:
-            body["_privacy"] = {"data_classification": "confidential", "redacted": True}
+        if classification in ("confidential", "restricted"):
+            body["_privacy"] = {"data_classification": classification, "redacted": total_redactions > 0}
+        elif total_redactions > 0:
+            # classify unreachable (None) or said internal/public, but a PII
+            # span was found anyway — treat as confidential, same as the
+            # pre-classifier behaviour.
+            body["_privacy"] = {
+                "data_classification": classification or "confidential",
+                "redacted": True,
+            }
 
         return body
 
@@ -81,6 +111,24 @@ class Filter:
                 print(f"confidential redaction: restore failed: {err}, leaving message as-is")
 
         return body
+
+    async def _classify(self, org_id: str, text: str) -> str:
+        cache_key = (org_id, text)
+        cached = self._classify_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.valves.MADE_URL}/privacy/classify",
+                json={"org_id": org_id, "text": text},
+                timeout=aiohttp.ClientTimeout(total=self.valves.REQUEST_TIMEOUT_SECONDS),
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                result = data["classification"]
+                self._classify_cache[cache_key] = result
+                return result
 
     async def _redact(self, org_id: str, text: str) -> tuple[str, int]:
         cache_key = (org_id, text)

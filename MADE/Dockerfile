@@ -17,8 +17,9 @@ RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/wh
 # Bake the complexity classifier's weights into the image so a container
 # start never depends on the network or eats a cold-download delay.
 RUN python -c "from core.complexity import warm_up; warm_up()"
-# Same for the redaction NER model.
+# Same for the redaction NER models — English (spaCy) + Indonesian (HF).
 RUN python -m spacy download en_core_web_sm
+RUN python -c "from core.privacy.detectors import warm_up_ner; warm_up_ner()"
 # Weights are already on disk from the RUN above — never let transformers
 # phone home to check for a newer revision at container startup.
 ENV HF_HUB_OFFLINE=1

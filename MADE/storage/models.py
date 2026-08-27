@@ -42,6 +42,33 @@ class EntityMapping(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class ClassificationCache(SQLModel, table=True):
+    __tablename__ = "classification_cache"
+    __table_args__ = (UniqueConstraint("org_id", "text_hash", name="uq_classcache_org_hash"),)
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    org_id: str = Field(index=True)
+    text_hash: str
+    classification: str
+    confidence: float
+    source: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class RedactionLeak(SQLModel, table=True):
+    """A redact() pass whose output still contained a regex-detectable span —
+    a detector gap to fix. The raw text is never stored, only its hash."""
+
+    __tablename__ = "redaction_leaks"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    org_id: str = Field(index=True)
+    entity_types: str  # comma-joined, e.g. "PHONE,EMAIL"
+    span_count: int
+    context_hash: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class ExperimentRun(SQLModel, table=True):
     __tablename__ = "experiment_runs"
 

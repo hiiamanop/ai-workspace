@@ -104,6 +104,11 @@
 				goto('/', { replaceState: true });
 			} else if ($page.url.pathname.includes('/policies') && $user?.role !== 'admin') {
 				goto('/', { replaceState: true });
+			} else if (
+				$page.url.pathname.includes('/privacy-mappings') &&
+				$user?.role !== 'admin'
+			) {
+				goto('/', { replaceState: true });
 			}
 		}
 
@@ -216,6 +221,20 @@
 								<span class="text-sm opacity-60">
 									{formatCount($workspaceCounts.policies)}
 								</span>
+							</a>
+						{/if}
+
+						{#if $user?.role === 'admin'}
+							<a
+								draggable="false"
+								aria-current={activeWorkspaceSection === 'privacy-mappings' ? 'page' : null}
+								class="min-w-fit px-1 text-sm inline-flex items-center gap-1 {activeWorkspaceSection ===
+								'privacy-mappings'
+									? 'text-gray-900 dark:text-gray-100'
+									: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
+								href="/workspace/privacy-mappings"
+							>
+								<span>{$i18n.t('Redaction')}</span>
 							</a>
 						{/if}
 

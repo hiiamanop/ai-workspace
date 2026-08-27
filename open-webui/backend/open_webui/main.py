@@ -160,6 +160,7 @@ from open_webui.routers import (
     openai,
     pipelines,
     policies,
+    privacy,
     prompts,
     retrieval,
     scim,
@@ -799,6 +800,7 @@ app.include_router(configs.router, prefix='/api/v1/configs', tags=['configs'])
 app.include_router(auths.router, prefix='/api/v1/auths', tags=['auths'])
 
 app.include_router(policies.router, prefix='/api/v1/policies', tags=['policies'])
+app.include_router(privacy.router, prefix='/api/v1/privacy', tags=['privacy'])
 app.include_router(users.router, prefix='/api/v1/users', tags=['users'])
 
 

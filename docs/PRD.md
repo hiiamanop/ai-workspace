@@ -73,7 +73,9 @@ phases in [[docs/PRD-confidentiality-pipeline.md]].
 
 ## Related docs
 
-- [[docs/PRD-confidentiality-pipeline.md]] — current work in detail.
+- [[docs/PRD-confidentiality-pipeline.md]] — Phases 1–3 (shipped).
+- [[docs/PRD-confidentiality-automation.md]] — follow-up: make classification
+  automatic, add Indonesian detection, wire `chat.ts`, add the admin surface.
 - [[docs/SYSTEM_DESIGN.md]], [[docs/SCHEMA.md]] — confidentiality pipeline
   design and shapes.
 - [[docs/PRD-openwebui-integrations.md]] — survey of what else in Open

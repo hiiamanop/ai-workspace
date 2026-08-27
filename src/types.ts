@@ -2,6 +2,9 @@ export interface TaskIn {
   type: string;
   data_classification: "public" | "internal" | "confidential" | "restricted";
   estimated_context_tokens?: number;
+  // Set true by a caller that ran the text through MADE's /privacy/redact —
+  // how external_vendor.rego's deny gate is satisfied for confidential data.
+  redacted?: boolean;
 }
 
 export interface OrgIn {

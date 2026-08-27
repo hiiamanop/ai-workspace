@@ -1,0 +1,63 @@
+# Sensitivity lexicon for core/privacy/classifier.py's heuristic layer.
+# Whole-word / phrase match, case-insensitive. Keep tight — every entry
+# here can turn a benign message into a blocked one (see the classifier's
+# fail-closed behaviour for confidential-with-no-redactable-span).
+
+confidential:
+  en:
+    - confidential
+    - internal only
+    - do not share
+    - do not distribute
+    - not for distribution
+    - proprietary
+    - under nda
+    - trade secret
+    - acquisition
+    - merger
+    - layoff
+    - redundancy
+    - termination letter
+    - severance
+    - salary
+    - compensation package
+    - lawsuit
+    - litigation
+    - roadmap
+    - unreleased
+    - pre-release
+  id:
+    - rahasia
+    - sangat rahasia
+    - internal saja
+    - jangan disebar
+    - jangan dibagikan
+    - jangan diteruskan
+    - gaji
+    - slip gaji
+    - kompensasi
+    - pesangon
+    - phk
+    - pemutusan hubungan kerja
+    - akuisisi
+    - merger
+    - tuntutan hukum
+    - gugatan
+    - somasi
+    - nota kesepahaman
+    - sengketa
+
+public:
+  en:
+    - press release
+    - blog post
+    - blog draft
+    - public announcement
+    - for publication
+    - for immediate release
+  id:
+    - siaran pers
+    - rilis pers
+    - untuk publikasi
+    - pengumuman resmi
+    - untuk dipublikasikan

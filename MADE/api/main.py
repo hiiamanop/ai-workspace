@@ -7,7 +7,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 
 from api.schemas import (
     BaselineSummaryOut,
@@ -16,10 +16,15 @@ from api.schemas import (
     DecideRequest,
     DecideResponse,
     ExcludedOut,
+    EntityMappingOut,
+    EntityMappingUpdate,
     ExperimentRunRequest,
     ExperimentRunResponse,
     PolicyDeployRequest,
+    PrivacyClassifyRequest,
+    PrivacyClassifyResponse,
     RankingEntryOut,
+    RedactionLeakOut,
     RedactRequest,
     RedactResponse,
     RestoreRequest,
@@ -27,6 +32,7 @@ from api.schemas import (
 )
 import core.complexity as complexity
 from core.decision.engine import DecisionCandidate, Org, Task, decide
+from core.privacy import classifier
 from core.epm.loader import load_epm_manifest
 from core.epm.opa_client import OpaEvaluationError
 from core.experiment.config_loader import load_ahp_weights, load_candidates_config
@@ -34,8 +40,10 @@ from core.experiment.harness import load_scenarios, run_experiment
 from core.experiment.metrics import compute_baseline_summary
 from core.privacy import pseudonymizer
 from core.privacy.detectors import warm_up_ner
+from sqlmodel import select
+
 from storage.db import get_session, make_engine
-from storage.models import DecisionRecord
+from storage.models import DecisionRecord, RedactionLeak
 
 POLICIES_ROOT = Path(__file__).resolve().parent.parent / "policies"
 CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
@@ -89,6 +97,18 @@ def post_classify(request: ClassifyRequest) -> ClassifyResponse:
     return ClassifyResponse(complexity=complexity_level, label=label, score=score)
 
 
+@app.post("/privacy/classify", response_model=PrivacyClassifyResponse)
+def post_privacy_classify(request: PrivacyClassifyRequest) -> PrivacyClassifyResponse:
+    with get_session(get_engine()) as session:
+        result = classifier.classify(request.text, request.org_id, session)
+    return PrivacyClassifyResponse(
+        classification=result.classification,
+        confidence=result.confidence,
+        source=result.source,
+        signals=result.signals,
+    )
+
+
 @app.post("/privacy/redact", response_model=RedactResponse)
 def post_privacy_redact(request: RedactRequest) -> RedactResponse:
     with get_session(get_engine()) as session:
@@ -101,6 +121,79 @@ def post_privacy_restore(request: RestoreRequest) -> RestoreResponse:
     with get_session(get_engine()) as session:
         restored_text = pseudonymizer.restore(request.text, request.org_id, session)
     return RestoreResponse(restored_text=restored_text)
+
+
+@app.get("/privacy/mappings", response_model=list[EntityMappingOut])
+def get_privacy_mappings(org_id: str, limit: int = 100, offset: int = 0) -> list[EntityMappingOut]:
+    with get_session(get_engine()) as session:
+        pairs = pseudonymizer.list_mappings(session, org_id, limit=limit, offset=offset)
+        return [
+            EntityMappingOut(
+                id=row.id,
+                entity_type=row.entity_type,
+                placeholder=row.placeholder,
+                original_value=original,
+                created_at=row.created_at.isoformat(),
+            )
+            for row, original in pairs
+        ]
+
+
+@app.patch("/privacy/mappings/{mapping_id}", response_model=EntityMappingOut)
+def patch_privacy_mapping(mapping_id: str, org_id: str, body: EntityMappingUpdate) -> EntityMappingOut:
+    with get_session(get_engine()) as session:
+        try:
+            updated = pseudonymizer.update_mapping(
+                session,
+                org_id,
+                mapping_id,
+                original_value=body.original_value,
+                placeholder=body.placeholder,
+            )
+        except pseudonymizer.MappingConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="mapping not found")
+        row, value = updated
+        return EntityMappingOut(
+            id=row.id,
+            entity_type=row.entity_type,
+            placeholder=row.placeholder,
+            original_value=value,
+            created_at=row.created_at.isoformat(),
+        )
+
+
+@app.delete("/privacy/mappings/{mapping_id}", status_code=204)
+def delete_privacy_mapping(mapping_id: str, org_id: str) -> Response:
+    with get_session(get_engine()) as session:
+        if not pseudonymizer.delete_mapping(session, org_id, mapping_id):
+            raise HTTPException(status_code=404, detail="mapping not found")
+    return Response(status_code=204)
+
+
+@app.get("/privacy/leaks", response_model=list[RedactionLeakOut])
+def get_privacy_leaks(org_id: str, limit: int = 100, offset: int = 0) -> list[RedactionLeakOut]:
+    with get_session(get_engine()) as session:
+        rows = session.exec(
+            select(RedactionLeak)
+            .where(RedactionLeak.org_id == org_id)
+            .order_by(RedactionLeak.created_at.desc())
+            .limit(min(limit, 500))
+            .offset(offset)
+        ).all()
+    return [
+        RedactionLeakOut(
+            id=r.id,
+            entity_types=r.entity_types.split(",") if r.entity_types else [],
+            span_count=r.span_count,
+            context_hash=r.context_hash,
+            created_at=r.created_at.isoformat(),
+        )
+        for r in rows
+    ]
 
 
 @app.post("/decide", response_model=DecideResponse)

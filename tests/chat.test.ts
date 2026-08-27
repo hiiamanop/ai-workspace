@@ -55,6 +55,9 @@ const baseDeps = {
   webSearchExecutor: async () => {
     throw new Error("should not be called");
   },
+  classify: async () => "internal" as const,
+  redact: async (_orgId: string, text: string) => ({ text, count: 0 }),
+  restore: async (_orgId: string, text: string) => text,
 };
 
 test("handleChat() skips tool wiring entirely when MADE allows no tools", async () => {
@@ -183,6 +186,66 @@ test("handleChat() throws when MADE selects no candidate", async () => {
         toolExecutors: {},
       }),
     /MADE returned no eligible candidate/
+  );
+});
+
+test("handleChat() classifies + redacts a confidential message and threads it into decide()", async () => {
+  const tasksSeen: { classification: string; redacted: boolean }[] = [];
+  let restoreCalledWith: string | null = null;
+  const deps: ChatDeps = {
+    ...baseDeps,
+    classify: async () => "confidential" as const,
+    redact: async () => ({ text: "email [EMAIL_1]", count: 1 }),
+    restore: async (_orgId, text) => {
+      restoreCalledWith = text;
+      return text.replace("[EMAIL_1]", "jane@example.com");
+    },
+    decide: async (request) => {
+      if (request.decision_kind === "model_selection") {
+        tasksSeen.push({
+          classification: request.task.data_classification,
+          redacted: request.task.redacted ?? false,
+        });
+        return modelDecision;
+      }
+      return allowAllToolsDecision();
+    },
+    completeByProvider: {
+      "ollama-local": async (_model, messages) => {
+        // provider sees the redacted content, never the real address
+        assert.equal(messages.at(-1)?.content, "email [EMAIL_1]");
+        return { content: "sent to email [EMAIL_1]", toolCalls: [] };
+      },
+      deepseek: async () => {
+        throw new Error("should not be called");
+      },
+    },
+    toolExecutors: {},
+  };
+
+  const result = await handleChat([{ role: "user", content: "email jane@example.com" }], deps);
+
+  assert.ok(tasksSeen.every((t) => t.classification === "confidential" && t.redacted === true));
+  assert.equal(restoreCalledWith, "sent to email [EMAIL_1]");
+  assert.equal(result.reply, "sent to email jane@example.com");
+});
+
+test("handleChat() blocks a confidential request MADE approves no model for", async () => {
+  const deps: ChatDeps = {
+    ...baseDeps,
+    classify: async () => "confidential" as const,
+    redact: async () => ({ text: "the acquisition closes friday", count: 0 }),
+    decide: async (request) =>
+      request.decision_kind === "model_selection"
+        ? { ...modelDecision, selected_candidate_id: null }
+        : noToolsDecision(),
+    completeByProvider: {},
+    toolExecutors: {},
+  };
+
+  await assert.rejects(
+    () => handleChat([{ role: "user", content: "the acquisition closes friday" }], deps),
+    /can't be safely sent to an external model/
   );
 });
 

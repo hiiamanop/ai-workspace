@@ -66,6 +66,18 @@ class ClassifyResponse(BaseModel):
     score: float
 
 
+class PrivacyClassifyRequest(BaseModel):
+    org_id: str
+    text: str
+
+
+class PrivacyClassifyResponse(BaseModel):
+    classification: Literal["public", "internal", "confidential", "restricted"]
+    confidence: float
+    source: str
+    signals: list[str]
+
+
 class RedactRequest(BaseModel):
     org_id: str
     text: str
@@ -74,6 +86,27 @@ class RedactRequest(BaseModel):
 class RedactResponse(BaseModel):
     redacted_text: str
     redaction_count: int
+
+
+class RedactionLeakOut(BaseModel):
+    id: str
+    entity_types: list[str]
+    span_count: int
+    context_hash: str
+    created_at: str
+
+
+class EntityMappingOut(BaseModel):
+    id: str
+    entity_type: str
+    placeholder: str
+    original_value: str
+    created_at: str
+
+
+class EntityMappingUpdate(BaseModel):
+    original_value: str | None = None
+    placeholder: str | None = None
 
 
 class RestoreRequest(BaseModel):

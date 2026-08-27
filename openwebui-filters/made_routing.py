@@ -51,6 +51,16 @@ is no safe "cheapest tool" fallback the way there is for models.
 import aiohttp
 from pydantic import BaseModel
 
+# Surfaced to the user (as an Open WebUI error bubble) when a
+# confidential/restricted request has no approved model — e.g. sensitive
+# prose with nothing redactable, or a detected secret. Better an explicit
+# "can't send this" than a silent downgrade to a cheap external tier.
+BLOCKED_MESSAGE = (
+    "This message looks confidential and can't be safely sent to an external "
+    "model. Remove the sensitive details and try again, or ask an admin to "
+    "configure a trusted model."
+)
+
 
 class Filter:
     class Valves(BaseModel):
@@ -94,14 +104,29 @@ class Filter:
             return body
 
         complexity = await self._classify_complexity(body)
+        is_sensitive = (body.get("_privacy") or {}).get("data_classification") in (
+            "confidential",
+            "restricted",
+        )
+
+        selected = None
         try:
             selected = await self._call_made(brand_candidates, complexity, body)
-            if selected and any(c["id"] == selected for c in brand_candidates):
-                body["model"] = selected
-                return body
         except Exception as err:
-            print(f"MADE routing: /decide call failed: {err}, falling back to cheapest tier")
+            print(f"MADE routing: /decide call failed: {err}")
 
+        if selected and any(c["id"] == selected for c in brand_candidates):
+            body["model"] = selected
+            return body
+
+        # No model was approved. For confidential/restricted data this is a
+        # hard stop — never silently fall back to a cheap external tier with
+        # sensitive content (that would defeat external_vendor.rego /
+        # restricted.rego). Raising surfaces BLOCKED_MESSAGE to the user.
+        if is_sensitive:
+            raise Exception(BLOCKED_MESSAGE)
+
+        print("MADE routing: no selection, falling back to cheapest tier")
         fallback_model = _cheapest_qualifying(brand_candidates)
         if fallback_model is not None:
             body["model"] = fallback_model

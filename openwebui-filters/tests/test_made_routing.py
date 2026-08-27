@@ -5,6 +5,7 @@ import sys
 from aioresponses import aioresponses
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import made_routing  # noqa: E402
 from made_routing import Filter  # noqa: E402
 
 
@@ -470,6 +471,73 @@ def test_inlet_reads_privacy_marker_and_forwards_it_to_made():
             posted = m.requests[decide_key][0].kwargs["json"]
             assert posted["task"]["data_classification"] == "confidential"
             assert posted["task"]["redacted"] is True
+
+    asyncio.run(run())
+
+
+def test_inlet_blocks_sensitive_request_when_made_approves_no_model():
+    async def run():
+        with aioresponses() as m:
+            m.get(
+                "http://open-webui:8080/api/v1/models/list?page=1",
+                payload={"items": [BRAND_MODEL] + TIER_MODELS, "total": 3},
+            )
+            m.post(
+                "http://made:8000/decide",
+                payload={
+                    "decision_id": "d1",
+                    "selected_candidate_id": None,
+                    "requires_human_approval": False,
+                    "ranking": [],
+                    "excluded": [],
+                    "technique_used": "topsis",
+                    "policy_version": "1",
+                },
+            )
+            f = make_filter()
+            body = {
+                "model": "deepseek",
+                "messages": [{"role": "user", "content": "the acquisition closes friday"}],
+                "_privacy": {"data_classification": "confidential", "redacted": False},
+            }
+
+            raised = None
+            try:
+                await f.inlet(body, __user__={"id": "u1"})
+            except Exception as err:  # noqa: BLE001
+                raised = err
+
+            assert raised is not None and str(raised) == made_routing.BLOCKED_MESSAGE
+            assert body["model"] == "deepseek"  # not silently downgraded
+
+    asyncio.run(run())
+
+
+def test_inlet_still_falls_back_to_cheapest_for_non_sensitive_no_selection():
+    async def run():
+        with aioresponses() as m:
+            m.get(
+                "http://open-webui:8080/api/v1/models/list?page=1",
+                payload={"items": [BRAND_MODEL] + TIER_MODELS, "total": 3},
+            )
+            m.post(
+                "http://made:8000/decide",
+                payload={
+                    "decision_id": "d1",
+                    "selected_candidate_id": None,
+                    "requires_human_approval": False,
+                    "ranking": [],
+                    "excluded": [],
+                    "technique_used": "topsis",
+                    "policy_version": "1",
+                },
+            )
+            f = make_filter()
+            body = {"model": "deepseek", "messages": [{"role": "user", "content": "hi"}]}
+
+            result = await f.inlet(body, __user__={"id": "u1"})
+
+            assert result["model"] == "deepseek-v4-flash"
 
     asyncio.run(run())
 

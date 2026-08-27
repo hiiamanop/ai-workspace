@@ -1,8 +1,12 @@
 from cryptography.fernet import Fernet
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from core.privacy import pseudonymizer
+from core.privacy.detectors import Span
 from storage.db import make_engine
+from storage.models import RedactionLeak
+
+_EMAIL_LEN = len("jane@example.com")
 
 
 def _session(tmp_path) -> Session:
@@ -66,6 +70,73 @@ def test_unknown_placeholder_in_restore_is_left_unchanged(tmp_path, monkeypatch)
     restored = pseudonymizer.restore("hello [EMAIL_99]", "org1", session)
 
     assert restored == "hello [EMAIL_99]"
+
+
+def test_secret_is_redacted_non_reversibly(tmp_path, monkeypatch):
+    _set_key(monkeypatch)
+    session = _session(tmp_path)
+
+    redacted, count = pseudonymizer.redact("credential sk-abcdef0123456789abcdef here", "org1", session)
+
+    assert count >= 1
+    assert "[SECRET_REDACTED]" in redacted
+    assert "sk-abcdef" not in redacted
+    # No mapping row is stored, so restore() can only leave the marker as-is.
+    assert pseudonymizer.restore(redacted, "org1", session) == redacted
+
+
+def test_redact_records_a_leak_when_a_span_survives(tmp_path, monkeypatch):
+    _set_key(monkeypatch)
+    session = _session(tmp_path)
+    # First pass only "sees" the email — the phone is a detector gap.
+    monkeypatch.setattr(
+        pseudonymizer, "detect_all", lambda text: [Span(0, _EMAIL_LEN, "EMAIL", "jane@example.com")]
+    )
+
+    redacted, _ = pseudonymizer.redact("jane@example.com and call 0812-3456-7890", "org1", session)
+
+    assert "0812-3456-7890" in redacted
+    leaks = session.exec(select(RedactionLeak).where(RedactionLeak.org_id == "org1")).all()
+    assert len(leaks) == 1
+    assert "PHONE" in leaks[0].entity_types
+    assert "0812" not in leaks[0].context_hash  # hash only, never the text
+
+
+def test_redact_fail_closed_raises_on_leak(tmp_path, monkeypatch):
+    _set_key(monkeypatch)
+    monkeypatch.setenv("MADE_REDACTION_LEAK_FAIL_CLOSED", "1")
+    session = _session(tmp_path)
+    monkeypatch.setattr(
+        pseudonymizer, "detect_all", lambda text: [Span(0, _EMAIL_LEN, "EMAIL", "jane@example.com")]
+    )
+
+    try:
+        pseudonymizer.redact("jane@example.com and 0812-3456-7890", "org1", session)
+        assert False, "expected RedactionLeakError"
+    except pseudonymizer.RedactionLeakError:
+        pass
+
+
+def test_restore_logs_a_mangled_placeholder(tmp_path, monkeypatch, capsys):
+    _set_key(monkeypatch)
+    session = _session(tmp_path)
+    pseudonymizer.redact("contact jane@example.com", "org1", session)  # mints [EMAIL_1]
+
+    out = pseudonymizer.restore("contact [Email 1] now", "org1", session)
+
+    assert out == "contact [Email 1] now"  # not recovered without the flag
+    assert "mangled placeholder" in capsys.readouterr().out
+
+
+def test_restore_fuzzy_recovers_a_mangled_placeholder(tmp_path, monkeypatch):
+    _set_key(monkeypatch)
+    monkeypatch.setenv("MADE_RESTORE_FUZZY", "1")
+    session = _session(tmp_path)
+    pseudonymizer.redact("contact jane@example.com", "org1", session)
+
+    out = pseudonymizer.restore("contact [Email 1] now", "org1", session)
+
+    assert out == "contact jane@example.com now"
 
 
 def test_redact_raises_when_encryption_key_missing(tmp_path, monkeypatch):
