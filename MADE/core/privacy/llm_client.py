@@ -49,8 +49,8 @@ def classify(text: str) -> str | None:
                 ],
                 "temperature": 0,
                 "max_tokens": 400,
-                # Some OpenAI-compatible gateways (e.g. OmniRoute) stream by
-                # default; force a single JSON body so response.json() works.
+                # Some OpenAI-compatible gateways stream by default; force a
+                # single JSON body so response.json() works.
                 "stream": False,
             },
             timeout=timeout,

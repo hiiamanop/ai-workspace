@@ -6,7 +6,9 @@ package made.hard
 # that happened, not a courtesy flag it can skip. Distinct from
 # compliance.rego's unverified_vendors deny (that one is about vendor
 # trust; this one is about whether the data was made safe to send).
-external_vendors := {"deepseek", "openai"}
+# "omniroute" is a gateway that fans out to Claude/DeepSeek/Gemini/etc over
+# the public internet — same exposure as calling those vendors directly.
+external_vendors := {"deepseek", "openai", "omniroute"}
 
 deny[reason] {
 	{"confidential", "restricted"}[input.task.data_classification]

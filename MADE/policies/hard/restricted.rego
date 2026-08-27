@@ -8,7 +8,7 @@ package made.hard
 # credential may carry another the detectors missed, and the safe move is
 # to keep the whole payload off external APIs. Vendor set mirrors
 # external_vendor.rego.
-restricted_external_vendors := {"deepseek", "openai"}
+restricted_external_vendors := {"deepseek", "openai", "omniroute"}
 
 deny[reason] {
 	input.task.data_classification == "restricted"
