@@ -11,13 +11,11 @@ from dataclasses import dataclass, field
 
 from sqlmodel import Session, select
 
-from core.privacy import lexicon, llm_client
-from core.privacy.detectors import detect_all
+from core.privacy import llm_client
+from core.privacy.detectors import detect
 from storage.models import ClassificationCache
 
 _ID_SPAN_TYPES = {"CARD_NUMBER", "ID_NUMBER", "NPWP", "KK"}
-_CONTACT_SPAN_TYPES = {"EMAIL", "PHONE", "ID_PLATE"}
-_SHORT_TEXT_CHARS = 40
 
 
 @dataclass
@@ -33,35 +31,22 @@ def _hash(text: str) -> str:
 
 
 def _heuristic(text: str) -> ClassifyResult | None:
-    """Returns a result, or None when inconclusive (caller asks the LLM)."""
-    spans = detect_all(text)
-    types = [s.entity_type for s in spans]
+    """Deterministic safety floor — the cases that MUST be caught instantly
+    and can't wait on (or trust) an LLM. Everything else returns None and the
+    caller asks the LLM.
+
+    Regex `detect()` only (not `detect_all()`): the NER models are too noisy
+    on casual text to drive a decision ("MADE", "ayam goreng" both tag
+    PERSON). NER still runs during actual redaction.
+    """
+    types = {s.entity_type for s in detect(text)}
 
     if "SECRET" in types:
         return ClassifyResult("restricted", 0.95, "heuristic", ["secret-span"])
 
-    id_hits = sorted({t for t in types if t in _ID_SPAN_TYPES})
+    id_hits = sorted(types & _ID_SPAN_TYPES)
     if id_hits:
         return ClassifyResult("confidential", 0.9, "heuristic", [f"id-span:{','.join(id_hits)}"])
-
-    persons = {s.value.lower() for s in spans if s.entity_type == "PERSON"}
-    orgs = [s for s in spans if s.entity_type == "ORG"]
-    if len(persons) >= 2 and orgs:
-        return ClassifyResult("confidential", 0.7, "heuristic", ["ner:person+org"])
-
-    conf_hits = lexicon.matches(text, "confidential")
-    if conf_hits:
-        return ClassifyResult("confidential", 0.75, "heuristic", [f"lexicon-confidential:{conf_hits[0]}"])
-
-    pub_hits = lexicon.matches(text, "public")
-    if pub_hits:
-        return ClassifyResult("public", 0.7, "heuristic", [f"lexicon-public:{pub_hits[0]}"])
-
-    if any(t in _CONTACT_SPAN_TYPES for t in types):
-        return ClassifyResult("internal", 0.6, "heuristic", ["contact-span"])
-
-    if len(text.strip()) < _SHORT_TEXT_CHARS:
-        return ClassifyResult("internal", 0.6, "heuristic", ["short-text"])
 
     return None
 

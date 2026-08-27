@@ -96,18 +96,20 @@ def test_inlet_no_privacy_marker_for_internal_text():
     asyncio.run(run())
 
 
-def test_inlet_still_redacts_a_stray_span_in_internal_text():
+def test_inlet_does_not_redact_internal_text():
     async def run():
         with aioresponses() as m:
             _classify(m, "internal")
-            _redact(m, "ping me at [EMAIL_1]", 1)
+            # no /privacy/redact registered — a call would raise
             f = make_filter()
             body = {"messages": [{"role": "user", "content": "ping me at bob@example.com"}]}
 
             result = await f.inlet(body, __user__={"id": "u1"})
 
-            assert result["messages"][0]["content"] == "ping me at [EMAIL_1]"
-            assert result["_privacy"] == {"data_classification": "internal", "redacted": True}
+            # internal is allowed to reach the vendor; over-eager NER on casual
+            # text does more harm than good, so leave it alone.
+            assert result["messages"][0]["content"] == "ping me at bob@example.com"
+            assert "_privacy" not in result
 
     asyncio.run(run())
 
@@ -131,27 +133,11 @@ def test_inlet_only_looks_at_user_role_messages():
     asyncio.run(run())
 
 
-def test_inlet_degrades_to_redact_only_when_classify_unreachable():
+def test_inlet_leaves_body_untouched_when_classify_unreachable():
     async def run():
         with aioresponses() as m:
             m.post(f"{MADE}/privacy/classify", exception=Exception("connection refused"))
-            _redact(m, "email [EMAIL_1]", 1)
-            f = make_filter()
-            body = {"messages": [{"role": "user", "content": "email jane@example.com"}]}
-
-            result = await f.inlet(body, __user__={"id": "u1"})
-
-            assert result["messages"][0]["content"] == "email [EMAIL_1]"
-            assert result["_privacy"] == {"data_classification": "confidential", "redacted": True}
-
-    asyncio.run(run())
-
-
-def test_inlet_leaves_body_untouched_when_made_fully_unreachable():
-    async def run():
-        with aioresponses() as m:
-            m.post(f"{MADE}/privacy/classify", exception=Exception("connection refused"))
-            m.post(f"{MADE}/privacy/redact", exception=Exception("connection refused"))
+            # classify down -> treat as internal -> no redaction, no _privacy
             f = make_filter()
             body = {"messages": [{"role": "user", "content": "email jane@example.com"}]}
 

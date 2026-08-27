@@ -71,8 +71,16 @@ class Filter:
         try:
             classification = await self._classify(org_id, combined)
         except Exception as err:
-            print(f"confidential redaction: classify failed: {err}, degrading to redact-only")
-            classification = None
+            print(f"confidential redaction: classify failed: {err}, treating as internal")
+            classification = "internal"
+
+        # Only redact confidential/restricted messages. Redaction (regex +
+        # NER) is imperfect and over-eager on casual text — running it on an
+        # ordinary "internal" query mangles it ("ayam goreng" -> [PERSON_1])
+        # for no protective benefit, since "internal" is allowed to reach the
+        # vendor anyway.
+        if classification not in ("confidential", "restricted"):
+            return body
 
         total_redactions = 0
         for message in user_messages:
@@ -85,16 +93,7 @@ class Filter:
                 message["content"] = redacted_text
                 total_redactions += count
 
-        if classification in ("confidential", "restricted"):
-            body["_privacy"] = {"data_classification": classification, "redacted": total_redactions > 0}
-        elif total_redactions > 0:
-            # classify unreachable (None) or said internal/public, but a PII
-            # span was found anyway — treat as confidential, same as the
-            # pre-classifier behaviour.
-            body["_privacy"] = {
-                "data_classification": classification or "confidential",
-                "redacted": True,
-            }
+        body["_privacy"] = {"data_classification": classification, "redacted": total_redactions > 0}
 
         return body
 

@@ -24,23 +24,19 @@ def test_id_span_is_confidential(tmp_path):
     assert r.classification == "confidential"
 
 
-def test_confidential_lexicon_indonesian(tmp_path):
+def test_plain_text_goes_to_llm(tmp_path, monkeypatch):
+    # No secret / ID span -> the regex floor abstains, the LLM decides.
+    monkeypatch.setattr(classifier.llm_client, "classify", lambda t: "confidential")
     r = classifier.classify("mohon jangan disebar, ini soal pesangon karyawan", "org1", _session(tmp_path))
     assert r.classification == "confidential"
-    assert any(s.startswith("lexicon-confidential") for s in r.signals)
+    assert r.source == "llm"
 
 
-def test_public_lexicon(tmp_path):
-    r = classifier.classify(
-        "draft siaran pers untuk publikasi produk baru minggu depan", "org1", _session(tmp_path)
-    )
-    assert r.classification == "public"
-
-
-def test_short_text_is_internal(tmp_path):
+def test_short_plain_text_still_goes_to_llm(tmp_path, monkeypatch):
+    monkeypatch.setattr(classifier.llm_client, "classify", lambda t: "internal")
     r = classifier.classify("hi there team", "org1", _session(tmp_path))
     assert r.classification == "internal"
-    assert "short-text" in r.signals
+    assert r.source == "llm"
 
 
 def test_inconclusive_falls_to_llm(tmp_path, monkeypatch):

@@ -7,6 +7,7 @@ every chat because a classifier LLM is down would be worse than the
 occasional mis-classification the heuristic already guards against.
 """
 import os
+import re
 
 import httpx
 
@@ -31,7 +32,10 @@ def classify(text: str) -> str | None:
 
     base_url = os.environ.get("MADE_CLASSIFIER_BASE_URL", "https://api.deepseek.com")
     model = os.environ.get("MADE_CLASSIFIER_MODEL", "deepseek-v4-flash")
-    timeout = float(os.environ.get("MADE_CLASSIFIER_TIMEOUT", "6"))
+    # Reasoning models (deepseek-v4-flash is one) spend their first output
+    # tokens on hidden reasoning before emitting the answer — a small
+    # max_tokens returns empty content, and the whole round trip runs longer.
+    timeout = float(os.environ.get("MADE_CLASSIFIER_TIMEOUT", "20"))
 
     try:
         response = httpx.post(
@@ -44,18 +48,25 @@ def classify(text: str) -> str | None:
                     {"role": "user", "content": text[:4000]},
                 ],
                 "temperature": 0,
-                "max_tokens": 4,
+                "max_tokens": 400,
+                # Some OpenAI-compatible gateways (e.g. OmniRoute) stream by
+                # default; force a single JSON body so response.json() works.
+                "stream": False,
             },
             timeout=timeout,
         )
         if response.status_code != 200:
             return None
-        reply = response.json()["choices"][0]["message"]["content"].strip().lower()
+        message = response.json()["choices"][0]["message"]
     except (httpx.HTTPError, KeyError, ValueError):
         return None
 
-    # Tolerate trailing punctuation / stray tokens — take the first enum word.
-    for token in reply.replace(".", " ").split():
-        if token in _ENUM:
-            return token
-    return None
+    content = (message.get("content") or "").strip().lower()
+    if content in _ENUM:
+        return content
+
+    # Fall back to scanning content + any reasoning text for the LAST enum word
+    # (a reasoning trace lands on its conclusion at the end).
+    blob = f"{content} {(message.get('reasoning_content') or '').lower()}"
+    found = [tok for tok in re.split(r"[^a-z]+", blob) if tok in _ENUM]
+    return found[-1] if found else None
