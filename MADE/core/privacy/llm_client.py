@@ -21,7 +21,11 @@ _SYSTEM_PROMPT = (
     "- confidential: material harm if leaked — finances, legal matters, HR/salary, "
     "unreleased plans, customer PII, contracts, anything marked internal-only or under NDA.\n"
     "- restricted: contains live credentials or secrets (API keys, passwords, private keys).\n"
-    "When unsure between two levels, pick the more sensitive one."
+    "Ordinary questions, casual conversation, and requests with no identifiable "
+    "sensitive subject matter are 'internal' — do not escalate just because a "
+    "text is short, vague, or about an unfamiliar topic. Only pick 'confidential' "
+    "or 'restricted' when the text itself names or contains the sensitive material "
+    "described above."
 )
 
 

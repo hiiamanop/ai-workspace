@@ -11,11 +11,12 @@ from dataclasses import dataclass, field
 
 from sqlmodel import Session, select
 
-from core.privacy import llm_client
+from core.privacy import lexicon, llm_client
 from core.privacy.detectors import detect
 from storage.models import ClassificationCache
 
 _ID_SPAN_TYPES = {"CARD_NUMBER", "ID_NUMBER", "NPWP", "KK"}
+_SHORT_TEXT_CHARS = 40
 
 
 @dataclass
@@ -37,7 +38,14 @@ def _heuristic(text: str) -> ClassifyResult | None:
 
     Regex `detect()` only (not `detect_all()`): the NER models are too noisy
     on casual text to drive a decision ("MADE", "ayam goreng" both tag
-    PERSON). NER still runs during actual redaction.
+    PERSON) — deliberately NOT restoring the old PERSON+ORG count check.
+    NER still runs during actual redaction.
+
+    Lexicon and short-text checks below ARE restored (removed in a26a50d):
+    without them, nearly every plain message with no SECRET/ID span fell
+    through to the LLM tie-break, whose prompt says "when unsure, pick the
+    more sensitive one" — that bias plus losing this safety floor is what
+    made harmless short prompts get flagged confidential.
     """
     types = {s.entity_type for s in detect(text)}
 
@@ -47,6 +55,17 @@ def _heuristic(text: str) -> ClassifyResult | None:
     id_hits = sorted(types & _ID_SPAN_TYPES)
     if id_hits:
         return ClassifyResult("confidential", 0.9, "heuristic", [f"id-span:{','.join(id_hits)}"])
+
+    conf_hits = lexicon.matches(text, "confidential")
+    if conf_hits:
+        return ClassifyResult("confidential", 0.75, "heuristic", [f"lexicon-confidential:{conf_hits[0]}"])
+
+    pub_hits = lexicon.matches(text, "public")
+    if pub_hits:
+        return ClassifyResult("public", 0.7, "heuristic", [f"lexicon-public:{pub_hits[0]}"])
+
+    if len(text.strip()) < _SHORT_TEXT_CHARS:
+        return ClassifyResult("internal", 0.6, "heuristic", ["short-text"])
 
     return None
 

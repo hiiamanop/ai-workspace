@@ -24,19 +24,28 @@ def test_id_span_is_confidential(tmp_path):
     assert r.classification == "confidential"
 
 
-def test_plain_text_goes_to_llm(tmp_path, monkeypatch):
-    # No secret / ID span -> the regex floor abstains, the LLM decides.
-    monkeypatch.setattr(classifier.llm_client, "classify", lambda t: "confidential")
+def test_lexicon_confidential_match_is_heuristic(tmp_path):
+    # Lexicon phrase resolves without touching the LLM.
     r = classifier.classify("mohon jangan disebar, ini soal pesangon karyawan", "org1", _session(tmp_path))
     assert r.classification == "confidential"
-    assert r.source == "llm"
+    assert r.source == "heuristic"
 
 
-def test_short_plain_text_still_goes_to_llm(tmp_path, monkeypatch):
-    monkeypatch.setattr(classifier.llm_client, "classify", lambda t: "internal")
+def test_lexicon_public_match_is_heuristic(tmp_path):
+    r = classifier.classify("draft ini untuk siaran pers besok pagi", "org1", _session(tmp_path))
+    assert r.classification == "public"
+    assert r.source == "heuristic"
+
+
+def test_short_plain_text_is_internal_without_llm(tmp_path, monkeypatch):
+    # <40 chars, no lexicon/ID/secret match -> resolved locally as a safety
+    # floor, never reaches the LLM's "when unsure" bias.
+    called = []
+    monkeypatch.setattr(classifier.llm_client, "classify", lambda t: called.append(t) or "confidential")
     r = classifier.classify("hi there team", "org1", _session(tmp_path))
     assert r.classification == "internal"
-    assert r.source == "llm"
+    assert r.source == "heuristic"
+    assert called == []
 
 
 def test_inconclusive_falls_to_llm(tmp_path, monkeypatch):
