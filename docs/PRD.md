@@ -30,22 +30,24 @@ approving it first.
      audit log) so policy changes don't require redeploying MADE by hand.
    - **D** — `web_search`/`scrape` registered as native Open WebUI Tools
      (calling back into this app's own `/api/*` routes).
-3. **Ollama → full API-token models.** Ollama is dropped from every code
-   path (`candidates.ts`, `chat.ts`, compose, env). DeepSeek is now the only
-   model candidate. This removed Ollama's *incidental* confidentiality
-   guarantee (nothing sensitive could leave the machine because the model
-   itself never left the machine) — which is what led directly to the next
-   item.
+3. **Ollama → governed multi-provider routing.** Ollama is dropped from every
+   ordinary chat path. OmniRouter is the primary OpenAI-compatible execution
+   gateway, while MADE remains the sole authority for model, tool, and human-
+   approval decisions. The gateway's noisy catalog is never trusted directly:
+   only explicitly reviewed, capability-verified candidates enter the catalog.
+   Antigravity models are the general-purpose group; the verified Minimax model
+   is an explicit fallback, and failures re-enter MADE rather than bypassing
+   policy. DeepSeek remains only where policy tooling intentionally pins it.
 
 ## Where it's going now
 
 **The confidentiality pipeline** (see [[docs/PRD-confidentiality-pipeline.md]],
 [[docs/SYSTEM_DESIGN.md]], [[docs/SCHEMA.md]]) restores that guarantee at the
 right layer — data transformation, not vendor choice. MADE gains a
-`core/privacy/` subsystem: regex + NER detection, reversible pseudonymization
-with a persistent per-org mapping store, and a Qdrant-backed vector store so
-confidential RAG content is retrievable without ever being forwarded to an
-external model as raw text. MADE's existing (but previously inert) hard
+`core/privacy/` subsystem: regex + NER detection and reversible
+pseudonymization with a persistent per-org mapping store. There is deliberately
+no vector store in this pipeline; Open WebUI's existing Knowledge/RAG remains
+responsible for retrieval. MADE's existing (but previously inert) hard
 constraints — `compliance.rego`/`privacy.rego`, which already deny specific
 vendors for confidential/restricted `data_classification` — become the real
 enforcement gate: confidential data reaching an external vendor without

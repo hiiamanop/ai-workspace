@@ -1,46 +1,76 @@
 models:
-  - id: gpt-4o
-    vendor: openai
+  - id: antigravity/gemini-2.5-flash-lite
+    vendor: antigravity
     kind: model
-    cost_per_1k_tokens: 0.02
-    scores: {cost: 0.02, quality: 0.95, latency: 1.5, business_risk: 0.1}
-  - id: claude-haiku
-    vendor: anthropic
-    kind: model
-    cost_per_1k_tokens: 0.003
-    scores: {cost: 0.003, quality: 0.75, latency: 0.6, business_risk: 0.15}
-  - id: local-llama
-    vendor: unverified-oss
-    kind: model
-    cost_per_1k_tokens: 0.0
-    scores: {cost: 0.0, quality: 0.5, latency: 2.0, business_risk: 0.4}
-  - id: deepseek-v4-flash
-    vendor: deepseek
-    kind: model
-    source: real
-    provider: deepseek
-    business_risk: 0.25
-  - id: deepseek-v4-pro
-    vendor: deepseek
-    kind: model
-    source: real
-    provider: deepseek
-    business_risk: 0.15
-  - id: gemma4-12b
-    vendor: ollama-local
-    kind: model
-    source: real
-    provider: ollama
-    model_name: gemma4:12b
-    business_risk: 0.1
-tools:
-  - id: web_search
-    vendor: internal
-    kind: tool
     cost_per_1k_tokens: 0.001
-    scores: {cost: 0.001, quality: 0.8, latency: 0.5, business_risk: 0.1}
-  - id: shell_exec
-    vendor: internal
-    kind: tool
+    scores: {cost: 0.001, quality: 0.55, latency: 0.5, business_risk: 0.25}
+  - id: antigravity/gemini-2.5-flash
+    vendor: antigravity
+    kind: model
+    cost_per_1k_tokens: 0.001
+    scores: {cost: 0.001, quality: 0.7, latency: 0.5, business_risk: 0.3}
+  - id: antigravity/gemini-3.5-flash-extra-low
+    vendor: antigravity
+    kind: model
+    cost_per_1k_tokens: 0.001
+    scores: {cost: 0.001, quality: 0.65, latency: 0.5, business_risk: 0.25}
+  - id: antigravity/gemini-3.5-flash-low
+    vendor: antigravity
+    kind: model
+    cost_per_1k_tokens: 0.001
+    scores: {cost: 0.001, quality: 0.72, latency: 0.5, business_risk: 0.3}
+  - id: antigravity/gemini-3.1-flash-lite
+    vendor: antigravity
+    kind: model
+    cost_per_1k_tokens: 0.001
+    scores: {cost: 0.001, quality: 0.7, latency: 0.5, business_risk: 0.3}
+  - id: antigravity/gemini-3.6-flash-high
+    vendor: antigravity
+    kind: model
+    cost_per_1k_tokens: 0.001
+    scores: {cost: 0.001, quality: 0.85, latency: 0.5, business_risk: 0.4}
+  - id: antigravity/gpt-oss-120b-medium
+    vendor: antigravity
+    kind: model
+    cost_per_1k_tokens: 0.001
+    scores: {cost: 0.001, quality: 0.78, latency: 0.5, business_risk: 0.35}
+  - id: antigravity/gemini-pro-agent
+    vendor: antigravity
+    kind: model
+    cost_per_1k_tokens: 0.001
+    scores: {cost: 0.001, quality: 0.9, latency: 0.5, business_risk: 0.45}
+  - id: antigravity/gemini-3-flash-agent
+    vendor: antigravity
+    kind: model
+    cost_per_1k_tokens: 0.001
+    scores: {cost: 0.001, quality: 0.82, latency: 0.5, business_risk: 0.35}
+  - id: antigravity/gemini-3.1-pro-low
+    vendor: antigravity
+    kind: model
+    cost_per_1k_tokens: 0.001
+    scores: {cost: 0.001, quality: 0.88, latency: 0.5, business_risk: 0.4}
+  - id: antigravity/claude-sonnet-4-6
+    vendor: antigravity
+    kind: model
+    cost_per_1k_tokens: 0.001
+    scores: {cost: 0.001, quality: 0.92, latency: 0.5, business_risk: 0.45}
+  - id: antigravity/gemini-3.6-flash-low
+    vendor: antigravity
+    kind: model
+    cost_per_1k_tokens: 0.001
+    scores: {cost: 0.001, quality: 0.76, latency: 0.5, business_risk: 0.3}
+  - id: antigravity/gemini-3.6-flash-medium
+    vendor: antigravity
+    kind: model
+    cost_per_1k_tokens: 0.001
+    scores: {cost: 0.001, quality: 0.82, latency: 0.5, business_risk: 0.35}
+  - id: antigravity/claude-opus-4-6-thinking
+    vendor: antigravity
+    kind: model
+    cost_per_1k_tokens: 0.001
+    scores: {cost: 0.001, quality: 0.98, latency: 0.5, business_risk: 0.6}
+  - id: openrouter/minimax/minimax-m3:free
+    vendor: openrouter
+    kind: model
     cost_per_1k_tokens: 0.0
-    scores: {cost: 0.0, quality: 0.9, latency: 0.2, business_risk: 0.5}
+    scores: {cost: 0.0, quality: 0.7, latency: 0.8, business_risk: 0.2}

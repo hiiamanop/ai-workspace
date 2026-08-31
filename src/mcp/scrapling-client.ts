@@ -4,7 +4,12 @@ import type { McpToolConnection } from "./searxng-client.ts";
 
 async function defaultConnect(): Promise<McpToolConnection> {
   const scraplingUrl = process.env.SCRAPLING_URL ?? "http://scrapling:8000/mcp";
-  const transport = new StreamableHTTPClientTransport(new URL(scraplingUrl));
+  const authToken = process.env.SCRAPLING_MCP_AUTH_TOKEN;
+  const transport = new StreamableHTTPClientTransport(new URL(scraplingUrl), {
+    requestInit: authToken
+      ? { headers: { authorization: `Bearer ${authToken}` } }
+      : undefined,
+  });
   const client = new Client({ name: "ai-workspace", version: "0.1.0" }, { capabilities: {} });
   await client.connect(transport);
 

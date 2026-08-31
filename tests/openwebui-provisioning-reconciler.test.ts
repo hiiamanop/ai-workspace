@@ -10,6 +10,7 @@ const baseDeps = {
   mintApiKeyFn: async () => ({ ok: true as const, apiKey: "shared-key" }),
   provisionRedactionFilterFn: async () => ({ ok: true as const }),
   provisionContentFn: async () => ({ ok: true as const, actions: [] }),
+  provisionAutoFn: async () => ({ ok: true as const }),
 };
 
 test("reconcileOnce() mints one shared key and calls all four provisioners with it", async () => {
@@ -17,6 +18,7 @@ test("reconcileOnce() mints one shared key and calls all four provisioners with 
   const toolsCalls: unknown[] = [];
   const redactionCalls: unknown[] = [];
   const contentCalls: unknown[] = [];
+  const autoCalls: unknown[] = [];
 
   await reconcileOnce({
     ...baseDeps,
@@ -36,12 +38,17 @@ test("reconcileOnce() mints one shared key and calls all four provisioners with 
       contentCalls.push(deps);
       return { ok: true, actions: [] };
     },
+    provisionAutoFn: async (deps) => {
+      autoCalls.push(deps);
+      return { ok: true };
+    },
   });
 
   assert.equal(filterCalls.length, 1);
   assert.equal(toolsCalls.length, 1);
   assert.equal(redactionCalls.length, 1);
   assert.equal(contentCalls.length, 1);
+  assert.equal(autoCalls.length, 1);
   assert.equal((filterCalls[0] as { openwebuiUrl: string }).openwebuiUrl, "http://open-webui:8080");
   assert.equal((toolsCalls[0] as { openwebuiUrl: string }).openwebuiUrl, "http://open-webui:8080");
   assert.equal((redactionCalls[0] as { openwebuiUrl: string }).openwebuiUrl, "http://open-webui:8080");
@@ -50,6 +57,7 @@ test("reconcileOnce() mints one shared key and calls all four provisioners with 
   assert.equal((toolsCalls[0] as { openwebuiToken: string }).openwebuiToken, "shared-key");
   assert.equal((redactionCalls[0] as { openwebuiToken: string }).openwebuiToken, "shared-key");
   assert.equal((contentCalls[0] as { openwebuiToken: string }).openwebuiToken, "shared-key");
+  assert.equal((autoCalls[0] as { openwebuiToken: string }).openwebuiToken, "shared-key");
 });
 
 test("reconcileOnce() resolves false (not throw) when a provisioner reports failure", async () => {
@@ -60,6 +68,23 @@ test("reconcileOnce() resolves false (not throw) when a provisioner reports fail
     provisionContentFn: async () => ({ ok: false, error: "signin failed", actions: [] }),
   });
   assert.equal(ok, false);
+});
+
+test("reconcileOnce() passes the shared key to the Auto Pipe provisioner", async () => {
+  let autoCall: { openwebuiToken?: string } | undefined;
+  const ok = await reconcileOnce({
+    ...baseDeps,
+    provisionFilterFn: async () => ({ ok: true }),
+    provisionToolsFn: async () => ({ ok: true, actions: [] }),
+    provisionRedactionFilterFn: async () => ({ ok: true }),
+    provisionContentFn: async () => ({ ok: true, actions: [] }),
+    provisionAutoFn: async (deps) => {
+      autoCall = deps;
+      return { ok: true };
+    },
+  });
+  assert.equal(ok, true);
+  assert.equal(autoCall?.openwebuiToken, "shared-key");
 });
 
 test("reconcileOnce() resolves false when only the redaction filter provisioner fails", async () => {

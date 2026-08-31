@@ -26,6 +26,10 @@ class CandidateIn(BaseModel):
     cost_per_1k_tokens: float
     scores: dict[str, float]
     context_window_tokens: int | None = None
+    upstream_group: str | None = None
+    capabilities: dict[str, bool] | None = None
+    fallback: bool | None = None
+    verified: bool | None = None
 
 
 class DecideRequest(BaseModel):

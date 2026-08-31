@@ -16,6 +16,10 @@ export interface CandidateIn {
   cost_per_1k_tokens: number;
   scores: Record<string, number>;
   context_window_tokens?: number;
+  upstream_group?: string;
+  capabilities?: { streaming: boolean; tool_calling: boolean };
+  fallback?: boolean;
+  verified?: boolean;
 }
 
 export interface DecideRequest {

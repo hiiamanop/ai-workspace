@@ -57,6 +57,33 @@ const baseDeps = {
   },
 };
 
+test("handleChat() re-asks MADE after a provider failure", async () => {
+  const selected: string[] = [];
+  const candidates = [
+    { id: "primary", vendor: "router", kind: "model" as const, cost_per_1k_tokens: 0, scores: {} },
+    { id: "fallback", vendor: "router", kind: "model" as const, cost_per_1k_tokens: 0, scores: {}, fallback: true },
+  ];
+  const deps: ChatDeps = {
+    ...baseDeps,
+    availableCandidates: () => candidates,
+    decide: async (request) => {
+      if (request.decision_kind === "tool_selection") return noToolsDecision();
+      selected.push(request.candidates.map((c) => c.id).join(","));
+      return { ...modelDecision, selected_candidate_id: selected.length === 1 ? "primary" : "fallback" };
+    },
+    completeByProvider: {
+      router: async (model) => {
+        if (model === "primary") throw new Error("upstream unavailable");
+        return { content: "fallback reply", toolCalls: [] };
+      },
+    },
+    toolExecutors: {},
+  };
+  const result = await handleChat([{ role: "user", content: "hello" }], deps);
+  assert.equal(result.selectedCandidateId, "fallback");
+  assert.deepEqual(selected, ["primary,fallback", "fallback"]);
+});
+
 test("handleChat() skips tool wiring entirely when MADE allows no tools", async () => {
   const decideCalls: string[] = [];
   const estimatedTokensSeen: number[] = [];

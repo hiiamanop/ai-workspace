@@ -1,6 +1,6 @@
 import { decide as defaultDecide } from "./made-client.ts";
 import { availableCandidates as defaultAvailableCandidates, availableToolCandidates as defaultAvailableToolCandidates } from "./candidates.ts";
-import { complete as deepseekComplete, completeStream as deepseekCompleteStream } from "./providers/deepseek-client.ts";
+import { complete as omniRouterComplete, completeStream as omniRouterCompleteStream } from "./providers/openai-compatible-client.ts";
 import { callWebSearch, type WebSearchResponse, type WebSearchResult } from "./mcp/searxng-client.ts";
 import { formatWebSearchResults } from "./web-search-format.ts";
 import { callScrape } from "./mcp/scrapling-client.ts";
@@ -49,10 +49,10 @@ const defaultDeps: ChatDeps = {
   availableCandidates: defaultAvailableCandidates,
   availableToolCandidates: defaultAvailableToolCandidates,
   completeByProvider: {
-    deepseek: deepseekComplete,
+    omnirouter: omniRouterComplete,
   },
   completeStreamByProvider: {
-    deepseek: deepseekCompleteStream,
+    omnirouter: omniRouterCompleteStream,
   },
   toolExecutors: {
     scrape: (args) => callScrape(String(args.url)),
@@ -97,26 +97,41 @@ export async function handleChat(
 ): Promise<{ selectedCandidateId: string; reply: string; toolsUsed: string[] }> {
   const candidates = deps.availableCandidates();
   const messages = trimHistory(history, HISTORY_BUDGET_TOKENS);
+  const failedCandidates = new Set<string>();
 
-  const modelDecision = await deps.decide(decideRequest("model_selection", candidates, messages));
+  const selectModel = async (available: CandidateIn[]): Promise<CandidateIn> => {
+    const decision = await deps.decide(decideRequest("model_selection", available, messages));
+    if (decision.requires_human_approval) {
+      throw new Error("MADE requires human approval for this request");
+    }
+    if (!decision.selected_candidate_id) {
+      throw new Error("MADE returned no eligible candidate; service degraded");
+    }
+    const candidate = available.find((c) => c.id === decision.selected_candidate_id);
+    if (!candidate) {
+      throw new Error(`MADE selected unknown candidate id ${decision.selected_candidate_id}`);
+    }
+    return candidate;
+  };
 
-  if (!modelDecision.selected_candidate_id) {
-    throw new Error("MADE returned no eligible candidate");
-  }
-  if (modelDecision.requires_human_approval) {
-    throw new Error("MADE requires human approval for this request");
-  }
-
-  let selected = candidates.find((c) => c.id === modelDecision.selected_candidate_id);
-  if (!selected) {
-    throw new Error(`MADE selected unknown candidate id ${modelDecision.selected_candidate_id}`);
-  }
-
+  let selected = await selectModel(candidates);
   let complete = deps.completeByProvider[selected.vendor];
+  let completeStreamFn = deps.completeStreamByProvider?.[selected.vendor];
+  const availableAfterFailure = () => candidates.filter((candidate) => !failedCandidates.has(candidate.id));
+  const reselectAfterFailure = async (error: unknown): Promise<void> => {
+    const failedId = selected.id;
+    failedCandidates.add(failedId);
+    const remaining = availableAfterFailure();
+    if (remaining.length === 0) {
+      throw new Error(`model ${failedId} failed and no fallback candidates remain: ${(error as Error).message}`);
+    }
+    selected = await selectModel(remaining);
+    complete = deps.completeByProvider[selected.vendor];
+    completeStreamFn = deps.completeStreamByProvider?.[selected.vendor];
+  };
   if (!complete && !streamCallbacks) {
     throw new Error(`no provider client registered for vendor ${selected.vendor}`);
   }
-  let completeStreamFn = deps.completeStreamByProvider?.[selected.vendor];
   if (streamCallbacks && !completeStreamFn) {
     throw new Error(`no streaming provider client registered for vendor ${selected.vendor}`);
   }
@@ -141,9 +156,9 @@ export async function handleChat(
     const currentEstimate = estimateContextTokens("", Object.values(TOOL_DEFS), messages);
     const capacity = await ensureCandidateFits(
       selected,
-      candidates,
+      availableAfterFailure(),
       currentEstimate,
-      decideRequest("model_selection", candidates, messages),
+      decideRequest("model_selection", availableAfterFailure(), messages),
       deps.decide
     );
 
@@ -172,15 +187,25 @@ export async function handleChat(
       completeStreamFn = nextCompleteStream;
     }
 
-    const result = streamCallbacks
-      ? await completeStreamFn!(
+    let result: CompletionResult;
+    try {
+      if (streamCallbacks) {
+        result = await completeStreamFn!(
           selected.id,
           messages,
           tools,
           { onDelta: streamCallbacks.onDelta, onToolCallDelta: streamCallbacks.onToolCallDelta },
           streamCallbacks.signal
-        )
-      : await complete(selected.id, messages, tools);
+        );
+      } else {
+        result = await complete(selected.id, messages, tools);
+      }
+    } catch (error) {
+      if ((error as Error).name === "AbortError") throw error;
+      await reselectAfterFailure(error);
+      i -= 1;
+      continue;
+    }
 
     if (result.content) {
       lastNonEmptyContent = result.content;

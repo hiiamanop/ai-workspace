@@ -4,6 +4,7 @@ import { provisionFilter } from "./openwebui-provision.ts";
 import { provisionRedactionFilter } from "./openwebui-provision-redaction.ts";
 import { provisionTools } from "./openwebui-provision-tools.ts";
 import { provisionContent } from "./openwebui-provision-content.ts";
+import { provisionAuto } from "./openwebui-provision-auto.ts";
 
 // Runs the same provisioning src/openwebui-provision*.ts's CLI entry points do,
 // on an interval instead of requiring a manual re-run after every fresh volume
@@ -22,6 +23,7 @@ export interface ProvisioningReconcilerDeps {
   provisionToolsFn?: typeof provisionTools;
   provisionRedactionFilterFn?: typeof provisionRedactionFilter;
   provisionContentFn?: typeof provisionContent;
+  provisionAutoFn?: typeof provisionAuto;
 }
 
 export async function reconcileOnce(deps: ProvisioningReconcilerDeps): Promise<boolean> {
@@ -92,7 +94,17 @@ export async function reconcileOnce(deps: ProvisioningReconcilerDeps): Promise<b
     console.error(`provisioning reconciler: Content provisioning failed: ${contentResult.error}`);
   }
 
-  return filterResult.ok && toolsResult.ok && redactionFilterResult.ok && contentResult.ok;
+  const autoResult = await (deps.provisionAutoFn ?? provisionAuto)({
+    openwebuiUrl: deps.openwebuiUrl,
+    adminEmail: deps.adminEmail,
+    adminPassword: deps.adminPassword,
+    openwebuiToken,
+  });
+  if (!autoResult.ok) {
+    console.error(`provisioning reconciler: Auto Pipe provisioning failed: ${autoResult.error}`);
+  }
+
+  return filterResult.ok && toolsResult.ok && redactionFilterResult.ok && contentResult.ok && autoResult.ok;
 }
 
 export function startProvisioningReconciler(deps: ProvisioningReconcilerDeps): { stop(): void } {

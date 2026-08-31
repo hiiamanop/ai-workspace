@@ -33,11 +33,11 @@ Full local run needs two processes, neither of which survives a session switch:
 1. MADE (separate repo, `/home/naufa/workspace/MODE`): `.venv/bin/python -m uvicorn api.main:app --port 8000`
 2. This project: `npm install && npm run dev`
 
-This project's own chat (`chat.ts`) is DeepSeek-only (API-token based, via `DEEPSEEK_API_KEY` in `.env`) — there is no local model provider.
+This project's own chat (`chat.ts`) uses OmniRouter as its primary OpenAI-compatible gateway (via `OMNIROUTER_API_KEY` and `OMNIROUTER_BASE_URL` in `.env`); MADE selects from the curated, verified catalog. DeepSeek remains an intentional legacy exception for policy compiler/drafter tooling, not ordinary chat.
 
 Or the whole stack via Docker: `cp .env.example .env` (`env_file: .env` is not optional for `docker compose up`) then `docker compose up --build`. Compose brings up `app`, `searxng`, `scrapling`, `made`, and `open-webui`. Rebuild (`--build`) after any dependency change or `git merge` — a plain `docker compose up` reuses stale images and a plain `git merge` doesn't run `npm install`, so `node_modules` silently goes stale after pulling.
 
-Open WebUI is reachable at `http://localhost:3001`; `WEBUI_SECRET_KEY` must be set in `.env` or the container refuses to start (see `.env.example`). The first account created via sign-up becomes admin. LLM providers (e.g. DeepSeek) are configured entirely inside Open WebUI's Admin Settings post-login, not via `.env`—this project deliberately keeps zero LLM provider secrets in scope.
+Open WebUI is reachable at `http://localhost:3001`; `WEBUI_SECRET_KEY` must be set in `.env` or the container refuses to start (see `.env.example`). The first account created via sign-up becomes admin. Configure an OpenAI-compatible OmniRouter connection in Open WebUI's Admin Settings with URL `http://host.docker.internal:20128/v1` and the OmniRouter key; provider secrets are not committed to source. DeepSeek may remain configured separately only for the policy compiler/drafter exception.
 
 **Provisioning is auto-reconciled, not just a one-time script.** If
 `OPENWEBUI_ADMIN_EMAIL`/`OPENWEBUI_ADMIN_PASSWORD` are set, `server.ts`
@@ -74,9 +74,10 @@ soft ranking already absorbs classification error; not worth an LLM call.
    - Creates or updates the Filter function with its content
    - Provisions the Filter's configuration (MADE_URL, Open WebUI URL, token)
    Re-run this any time the Filter's source changes, or after a fresh volume/deploy.
-4. In Open WebUI's Admin Settings → Models, create the tier models for
-   each brand (e.g. `deepseek-v4-flash`, `deepseek-v4-pro`), each with a
-   `meta.made_scores` object containing cost and performance metrics.
+4. In Open WebUI's Admin Settings → Models, create the curated OmniRouter
+   tier models for the `antigravity` group (for example,
+   `antigravity/gemini-2.5-flash` and `antigravity/claude-sonnet-4-6`), each
+   with a `meta.made_scores` object containing cost and performance metrics.
    **IMPORTANT:** Every tier MUST include `cost_per_1k_tokens` (numeric, lower=better).
    **Critical:** When creating each tier model, grant access to every logged-in Open WebUI user via the
    `access_grants` field in the create payload: `"access_grants": [{"principal_type": "user", "principal_id": "*", "permission": "read"}]`.
@@ -88,10 +89,10 @@ soft ranking already absorbs classification error; not worth an LLM call.
      -H "Authorization: Bearer $ADMIN_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
-       "id": "deepseek-v4-flash",
-       "name": "DeepSeek Flash",
-       "base_model_id": "deepseek-v3",
-       "meta": {"made_scores": {"brand": "deepseek", "cost_per_1k_tokens": 0.0005, "quality": 0.6, "latency": 10, "business_risk": 0.1, "context_window_tokens": 32000}},
+       "id": "antigravity/gemini-2.5-flash",
+       "name": "Antigravity Gemini Flash",
+       "base_model_id": "antigravity/gemini-2.5-flash",
+       "meta": {"made_scores": {"brand": "antigravity", "cost_per_1k_tokens": 0.001, "quality": 0.7, "latency": 0.5, "business_risk": 0.3, "context_window_tokens": 1048576}},
        "params": {},
        "access_grants": [{"principal_type": "user", "principal_id": "*", "permission": "read"}]
      }'
@@ -142,9 +143,9 @@ Idempotent: creates, updates when source or `made_scores` differ, skips when up-
 
 ## Architecture
 
-**Request flow:** every chat request first calls MADE's `POST /decide` (a separate Python/FastAPI service from an unrelated thesis repo, reached only over HTTP — never import its code) to pick which model and which tools are allowed for that request, based on cost/quality/latency/risk policy (Rego hard constraints + TOPSIS soft ranking). Only after MADE approves does the code call a provider client (`src/providers/deepseek-client.ts`) or execute a tool. `MADE returned no eligible candidate` / `requires human approval` from that response are real control-flow branches, not edge cases — always check them before assuming a model/tool is usable.
+**Request flow:** every chat request first calls MADE's `POST /decide` (a separate Python/FastAPI service from an unrelated thesis repo, reached only over HTTP — never import its code) to pick which model and which tools are allowed for that request, based on cost/quality/latency/risk policy (Rego hard constraints + TOPSIS soft ranking). Only after MADE approves does the code call a provider client (`src/providers/openai-compatible-client.ts`) or execute a tool. `MADE returned no eligible candidate` / `requires human approval` from that response are real control-flow branches, not edge cases — always check them before assuming a model/tool is usable.
 
-**Entry point:** `src/chat.ts`'s `handleChat()` — the standalone chat page (`/`, `client/src/chat/ChatApp.tsx`), owns its own multi-turn history with mechanical token-budget trimming (`src/history-budget.ts`, `HISTORY_BUDGET_TOKENS`). Accepts optional `streamCallbacks` (`onDelta`, `onToolCallDelta`, `onToolResult`, `onSources`) — when present, the provider client streams via SSE (`completeStream()` in `src/providers/deepseek-client.ts`) instead of one-shot `complete()`. `src/server.ts` is the only place that turns these callbacks into wire events: a persistent WebSocket at `/ws`, one connection per page session, turn-based protocol keyed by a server-generated `turnId` with monotonic per-turn `seq` numbers. Events are buffered (capped, evicted after completion) so a client can `{type:"resume", turnId, lastSeq}` after a reconnect and replay only what it missed — `ChatApp.tsx` implements this.
+**Entry point:** `src/chat.ts`'s `handleChat()` — the standalone chat page (`/`, `client/src/chat/ChatApp.tsx`), owns its own multi-turn history with mechanical token-budget trimming (`src/history-budget.ts`, `HISTORY_BUDGET_TOKENS`). Accepts optional `streamCallbacks` (`onDelta`, `onToolCallDelta`, `onToolResult`, `onSources`) — when present, the provider client streams via SSE (`completeStream()` in `src/providers/openai-compatible-client.ts`) instead of one-shot `complete()`. `src/server.ts` is the only place that turns these callbacks into wire events: a persistent WebSocket at `/ws`, one connection per page session, turn-based protocol keyed by a server-generated `turnId` with monotonic per-turn `seq` numbers. Events are buffered (capped, evicted after completion) so a client can `{type:"resume", turnId, lastSeq}` after a reconnect and replay only what it missed — `ChatApp.tsx` implements this.
 
 **Web search citations:** `src/mcp/searxng-client.ts`'s `callWebSearch()` asks `mcp-searxng` for `response_format:"json"` and returns structured `WebSearchResult[]` (not raw text). `src/web-search-format.ts` turns that into a numbered `[N]` citable block, with the numbering offset threaded per-turn through `chat.ts` so multiple searches in one turn don't collide. `ChatApp.tsx` renders `[N]` markers as clickable chips backed by the matching structured result — see `docs/superpowers/specs/2026-08-12-inline-citations-design.md` before touching this again.
 

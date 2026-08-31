@@ -89,6 +89,13 @@ def post_classify(request: ClassifyRequest) -> ClassifyResponse:
     return ClassifyResponse(complexity=complexity_level, label=label, score=score)
 
 
+@app.get("/candidates")
+def get_candidates() -> dict:
+    """Return the reviewed model registry consumed by the Open WebUI Auto pipe."""
+    config = load_candidates_config(CONFIG_DIR / "candidates.yaml")
+    return {"models": list(config["raw"].get("models", []))}
+
+
 @app.post("/privacy/redact", response_model=RedactResponse)
 def post_privacy_redact(request: RedactRequest) -> RedactResponse:
     with get_session(get_engine()) as session:
