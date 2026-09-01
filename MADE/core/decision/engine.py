@@ -28,6 +28,8 @@ class Task(BaseModel):
 class Org(BaseModel):
     budget_remaining_usd: float
     region: str
+    organization_id: str = "default"
+    actor_id: str = "anonymous"
 
 
 class DecisionCandidate(BaseModel):

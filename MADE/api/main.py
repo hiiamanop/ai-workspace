@@ -5,9 +5,11 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from sqlmodel import select
 
 from api.schemas import (
     BaselineSummaryOut,
@@ -35,7 +37,7 @@ from core.experiment.metrics import compute_baseline_summary
 from core.privacy import pseudonymizer
 from core.privacy.detectors import warm_up_ner
 from storage.db import get_session, make_engine
-from storage.models import DecisionRecord
+from storage.models import AuditRecord, DecisionRecord
 
 POLICIES_ROOT = Path(__file__).resolve().parent.parent / "policies"
 CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
@@ -112,6 +114,8 @@ def post_privacy_restore(request: RestoreRequest) -> RestoreResponse:
 
 @app.post("/decide", response_model=DecideResponse)
 def post_decide(request: DecideRequest) -> DecideResponse:
+    started = time.perf_counter()
+    correlation_id = request.correlation_id or str(uuid.uuid4())
     task = Task(
         type=request.task.type,
         data_classification=request.task.data_classification,
@@ -126,7 +130,12 @@ def post_decide(request: DecideRequest) -> DecideResponse:
         run_id=request.task.run_id,
         max_steps=request.task.max_steps,
     )
-    org = Org(budget_remaining_usd=request.org.budget_remaining_usd, region=request.org.region)
+    org = Org(
+        budget_remaining_usd=request.org.budget_remaining_usd,
+        region=request.org.region,
+        organization_id=request.org.organization_id,
+        actor_id=request.org.actor_id,
+    )
     candidates = [
         DecisionCandidate(
             id=c.id, vendor=c.vendor, kind=c.kind,
@@ -142,6 +151,15 @@ def post_decide(request: DecideRequest) -> DecideResponse:
     try:
         result = decide(task=task, org=org, candidates=candidates, policies_dir=POLICIES_ROOT)
     except OpaEvaluationError as exc:
+        # Fail closed: an unavailable policy engine must never authorize work.
+        with get_session(get_engine()) as session:
+            session.add(AuditRecord(
+                correlation_id=correlation_id, event_type="policy_decision",
+                actor_id=request.org.actor_id, organization_id=request.org.organization_id,
+                decision_kind=request.decision_kind, latency_ms=(time.perf_counter() - started) * 1000,
+                outcome="policy_unavailable", metadata_json=json.dumps({"policy_set": request.policy_set}),
+            ))
+            session.commit()
         raise HTTPException(status_code=503, detail=f"policy engine unavailable: {exc}") from exc
 
     decision_id = str(uuid.uuid4())
@@ -155,6 +173,7 @@ def post_decide(request: DecideRequest) -> DecideResponse:
         excluded=[ExcludedOut(id=e.id, reason=e.reason) for e in result.excluded],
         technique_used=result.technique_used,
         policy_version=policy_version,
+        correlation_id=correlation_id,
     )
 
     with get_session(get_engine()) as session:
@@ -165,9 +184,48 @@ def post_decide(request: DecideRequest) -> DecideResponse:
             response_json=response.model_dump_json(),
             policy_version=policy_version,
         ))
+        session.add(AuditRecord(
+            correlation_id=correlation_id, event_type="policy_decision",
+            actor_id=request.org.actor_id, organization_id=request.org.organization_id,
+            decision_id=decision_id, policy_version=policy_version,
+            decision_kind=request.decision_kind,
+            latency_ms=(time.perf_counter() - started) * 1000,
+            outcome=("approved" if response.selected_candidate_id else "denied"),
+            metadata_json=json.dumps({
+                "selected_candidate_id": response.selected_candidate_id,
+                "requires_human_approval": response.requires_human_approval,
+                "excluded_count": len(response.excluded),
+                "policy_set": request.policy_set,
+            }),
+        ))
         session.commit()
 
     return response
+
+
+@app.get("/audit/events")
+def get_audit_events(
+    actor_id: str | None = None,
+    organization_id: str | None = None,
+    correlation_id: str | None = None,
+    limit: int = 100,
+) -> dict:
+    """Return safe audit metadata; access control belongs at the API gateway."""
+    limit = max(1, min(limit, 500))
+    with get_session(get_engine()) as session:
+        query = select(AuditRecord)
+        if actor_id:
+            query = query.where(AuditRecord.actor_id == actor_id)
+        if organization_id:
+            query = query.where(AuditRecord.organization_id == organization_id)
+        if correlation_id:
+            query = query.where(AuditRecord.correlation_id == correlation_id)
+        query = query.order_by(AuditRecord.created_at.desc()).limit(limit)
+        events = session.exec(query).all()
+    return {"events": [
+        {**event.model_dump(exclude={"metadata_json"}), "metadata": json.loads(event.metadata_json)}
+        for event in events
+    ]}
 
 
 # Policy ids become .rego filenames under policies/hard/: keep them

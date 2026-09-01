@@ -15,6 +15,26 @@ class DecisionRecord(SQLModel, table=True):
     policy_version: str
 
 
+class AuditRecord(SQLModel, table=True):
+    """Safe, queryable audit record; never stores prompts or credentials."""
+    __tablename__ = "audit_events"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    correlation_id: str = Field(index=True)
+    event_type: str = Field(index=True)
+    actor_id: str = Field(index=True)
+    organization_id: str = Field(index=True)
+    decision_id: str | None = Field(default=None, index=True)
+    policy_version: str | None = None
+    decision_kind: str | None = None
+    connector_id: str | None = None
+    capability: str | None = None
+    latency_ms: float | None = None
+    outcome: str
+    metadata_json: str = "{}"
+
+
 class ScoreCacheRecord(SQLModel, table=True):
     __tablename__ = "score_cache"
 

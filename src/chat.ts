@@ -8,6 +8,7 @@ import { TOOL_DEFS } from "./tools.ts";
 import { estimateContextTokens } from "./token-estimate.ts";
 import { ensureCandidateFits } from "./context-guard.ts";
 import { trimHistory } from "./history-budget.ts";
+import { randomUUID } from "node:crypto";
 import type { CandidateIn, ChatMessage, CompletionResult, DecideRequest, DecideResponse, ToolDef } from "./types.ts";
 
 const MAX_TOOL_ITERATIONS = 5;
@@ -63,7 +64,8 @@ const defaultDeps: ChatDeps = {
 function decideRequest(
   decisionKind: DecideRequest["decision_kind"],
   candidates: CandidateIn[],
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  correlationId: string
 ): DecideRequest {
   return {
     task: {
@@ -75,6 +77,7 @@ function decideRequest(
     decision_kind: decisionKind,
     candidates,
     policy_set: "default",
+    correlation_id: correlationId,
   };
 }
 
@@ -95,12 +98,13 @@ export async function handleChat(
   deps: ChatDeps = defaultDeps,
   streamCallbacks?: ChatStreamCallbacks
 ): Promise<{ selectedCandidateId: string; reply: string; toolsUsed: string[] }> {
+  const correlationId = randomUUID();
   const candidates = deps.availableCandidates();
   const messages = trimHistory(history, HISTORY_BUDGET_TOKENS);
   const failedCandidates = new Set<string>();
 
   const selectModel = async (available: CandidateIn[]): Promise<CandidateIn> => {
-    const decision = await deps.decide(decideRequest("model_selection", available, messages));
+    const decision = await deps.decide(decideRequest("model_selection", available, messages, correlationId));
     if (decision.requires_human_approval) {
       throw new Error("MADE requires human approval for this request");
     }
@@ -137,7 +141,7 @@ export async function handleChat(
   }
 
   const toolCandidates = deps.availableToolCandidates();
-  const toolDecision = await deps.decide(decideRequest("tool_selection", toolCandidates, messages));
+  const toolDecision = await deps.decide(decideRequest("tool_selection", toolCandidates, messages, correlationId));
   if (toolDecision.requires_human_approval) {
     throw new Error("MADE requires human approval for this request");
   }
@@ -158,7 +162,7 @@ export async function handleChat(
       selected,
       availableAfterFailure(),
       currentEstimate,
-      decideRequest("model_selection", availableAfterFailure(), messages),
+      decideRequest("model_selection", availableAfterFailure(), messages, correlationId),
       deps.decide
     );
 

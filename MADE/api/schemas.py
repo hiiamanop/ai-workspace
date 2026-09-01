@@ -24,6 +24,8 @@ class TaskIn(BaseModel):
 class OrgIn(BaseModel):
     budget_remaining_usd: float = 1000.0
     region: str = "us"
+    organization_id: str = "default"
+    actor_id: str = "anonymous"
 
 
 class CandidateIn(BaseModel):
@@ -47,6 +49,7 @@ class DecideRequest(BaseModel):
     decision_kind: Literal["model_selection", "tool_selection", "human_approval"]
     candidates: list[CandidateIn]
     policy_set: str = "default"
+    correlation_id: str | None = None
 
 
 class RankingEntryOut(BaseModel):
@@ -67,6 +70,7 @@ class DecideResponse(BaseModel):
     excluded: list[ExcludedOut]
     technique_used: str
     policy_version: str
+    correlation_id: str | None = None
 
 
 class ClassifyRequest(BaseModel):

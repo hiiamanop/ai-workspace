@@ -27,6 +27,8 @@ export interface WorkflowRunEnvelope {
   steps: WorkflowStep[];
   approval?: { required: boolean; granted: boolean; reason?: string; granted_at?: string };
   policy?: { decision_id?: string; policy_version?: string };
+  error?: { code: string; message: string; step_id?: string; retryable?: boolean };
+  verification?: { status: "pending" | "passed" | "failed"; message?: string; verified_at?: string };
 }
 
 export function createWorkflowRun(input: Pick<WorkflowRunEnvelope, "workflow_id" | "intent" | "data_classification"> & Partial<Pick<WorkflowRunEnvelope, "actor_id">>): WorkflowRunEnvelope {

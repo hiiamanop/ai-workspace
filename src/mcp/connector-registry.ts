@@ -13,7 +13,11 @@ export interface ConnectorManifest {
   requiredScopes?: string[];
   destructiveCapabilities?: string[];
   approvalRequiredCapabilities?: string[];
+  transport?: { type: "stdio" | "streamable-http"; command?: string; args?: string[]; url?: string };
+  capabilitySchemas?: Record<string, { input?: JsonSchema; output?: JsonSchema }>;
 }
+
+export interface JsonSchema { type?: "object" | "array" | "string" | "number" | "integer" | "boolean" | "null"; required?: string[]; properties?: Record<string, JsonSchema>; items?: JsonSchema; additionalProperties?: boolean; }
 
 export interface ConnectorRegistry {
   register(manifest: ConnectorManifest): void;
@@ -30,6 +34,8 @@ function validateManifest(manifest: ConnectorManifest): void {
   if (!manifest.version.trim()) throw new Error(`connector ${manifest.id} has no version`);
   if (!manifest.mcpServer.trim()) throw new Error(`connector ${manifest.id} has no MCP server`);
   if (manifest.capabilities.length === 0) throw new Error(`connector ${manifest.id} has no capabilities`);
+  if (manifest.transport?.type === "stdio" && !manifest.transport.command?.trim()) throw new Error(`connector ${manifest.id} stdio transport has no command`);
+  if (manifest.transport?.type === "streamable-http" && !manifest.transport.url?.trim()) throw new Error(`connector ${manifest.id} HTTP transport has no URL`);
   const capabilities = new Set(manifest.capabilities);
   for (const capability of [...(manifest.destructiveCapabilities ?? []), ...(manifest.approvalRequiredCapabilities ?? [])]) {
     if (!capabilities.has(capability)) {

@@ -16,6 +16,8 @@ export interface TaskIn {
 export interface OrgIn {
   budget_remaining_usd: number;
   region: string;
+  organization_id?: string;
+  actor_id?: string;
 }
 
 export interface CandidateIn {
@@ -39,6 +41,7 @@ export interface DecideRequest {
   decision_kind: "model_selection" | "tool_selection" | "human_approval";
   candidates: CandidateIn[];
   policy_set: string;
+  correlation_id?: string;
 }
 
 export interface RankingEntryOut {
@@ -59,6 +62,7 @@ export interface DecideResponse {
   excluded: ExcludedOut[];
   technique_used: string;
   policy_version: string;
+  correlation_id?: string;
 }
 
 export interface ToolCall {

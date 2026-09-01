@@ -137,6 +137,7 @@ architecture. This is intentionally the last major documentation task.
 
 ## Related documents
 
+- `docs/TODO.md` — prioritized implementation backlog.
 - `docs/AGENT_ORCHESTRATION.md`
 - `docs/2026-09-01-ai-orchestration-research.md`
 - `docs/DESIGN_SYSTEM.md` (current design; rewrite last)
