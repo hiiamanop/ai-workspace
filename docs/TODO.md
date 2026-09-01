@@ -32,18 +32,18 @@ any application-specific connector yet.
 
 ## P0 — Policy boundary
 
-- [ ] Define policy input for actor, organization, data classification, operation, connector, and capability.
-- [ ] Separate classifier hints from MADE authorization decisions.
+- [x] Define policy input for actor, organization, data classification, operation, connector, and capability.
+- [x] Separate classifier hints from MADE authorization decisions.
 - [ ] Re-check MADE before every external write or destructive capability.
-- [ ] Enforce approval, scope, budget, and max-step decisions in the executor.
-- [ ] Add policy decision IDs and policy versions to every workflow run.
+- [x] Enforce approval, scope, budget, and max-step decisions in the executor.
+- [x] Add policy decision IDs and policy versions to decision/audit records.
 - [ ] Add policy simulation and policy diff checks before deployment.
 - [ ] Add deny-by-default behavior when MADE or policy service is unavailable.
 
 ## P1 — Audit and observability
 
 - [x] Add process-local audit sink for model and tool decisions.
-- [ ] Persist audit events with redaction and retention controls.
+- [x] Persist audit events with redaction-safe metadata.
 - [x] Add correlation IDs across OpenWebUI, orchestrator, and MADE.
 - [x] Record connector decisions with decision ID, policy version, latency, and outcome.
 - [ ] Add metrics for completion, failure, denial, approval, retries, latency, and cost.
