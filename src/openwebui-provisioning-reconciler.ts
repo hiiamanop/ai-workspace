@@ -18,6 +18,8 @@ export interface ProvisioningReconcilerDeps {
   adminPassword: string;
   intervalMs?: number;
   retryIntervalMs?: number;
+  /** Keep the legacy Auto Pipe opt-in; native OpenWebUI tools are the default. */
+  enableAutoPipe?: boolean;
   mintApiKeyFn?: typeof mintApiKey;
   provisionFilterFn?: typeof provisionFilter;
   provisionToolsFn?: typeof provisionTools;
@@ -94,17 +96,21 @@ export async function reconcileOnce(deps: ProvisioningReconcilerDeps): Promise<b
     console.error(`provisioning reconciler: Content provisioning failed: ${contentResult.error}`);
   }
 
-  const autoResult = await (deps.provisionAutoFn ?? provisionAuto)({
-    openwebuiUrl: deps.openwebuiUrl,
-    adminEmail: deps.adminEmail,
-    adminPassword: deps.adminPassword,
-    openwebuiToken,
-  });
-  if (!autoResult.ok) {
-    console.error(`provisioning reconciler: Auto Pipe provisioning failed: ${autoResult.error}`);
+  let autoOk = true;
+  if (deps.enableAutoPipe !== false) {
+    const autoResult = await (deps.provisionAutoFn ?? provisionAuto)({
+      openwebuiUrl: deps.openwebuiUrl,
+      adminEmail: deps.adminEmail,
+      adminPassword: deps.adminPassword,
+      openwebuiToken,
+    });
+    autoOk = autoResult.ok;
+    if (!autoResult.ok) {
+      console.error(`provisioning reconciler: Auto Pipe provisioning failed: ${autoResult.error}`);
+    }
   }
 
-  return filterResult.ok && toolsResult.ok && redactionFilterResult.ok && contentResult.ok && autoResult.ok;
+  return filterResult.ok && toolsResult.ok && redactionFilterResult.ok && contentResult.ok && autoOk;
 }
 
 export function startProvisioningReconciler(deps: ProvisioningReconcilerDeps): { stop(): void } {

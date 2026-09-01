@@ -2,6 +2,15 @@ export interface TaskIn {
   type: string;
   data_classification: "public" | "internal" | "confidential" | "restricted";
   estimated_context_tokens?: number;
+  complexity?: "low" | "medium" | "high";
+  intent?: string;
+  needs_tools?: boolean;
+  requested_tools?: string[];
+  redacted?: boolean;
+  operation?: "read" | "draft" | "create" | "update" | "delete" | "publish" | "send" | "deploy";
+  approval_granted?: boolean;
+  run_id?: string;
+  max_steps?: number;
 }
 
 export interface OrgIn {
@@ -20,6 +29,8 @@ export interface CandidateIn {
   capabilities?: { streaming: boolean; tool_calling: boolean };
   fallback?: boolean;
   verified?: boolean;
+  operation?: TaskIn["operation"];
+  connector_id?: string;
 }
 
 export interface DecideRequest {

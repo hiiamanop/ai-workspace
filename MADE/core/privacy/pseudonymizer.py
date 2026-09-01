@@ -15,6 +15,8 @@ from cryptography.fernet import Fernet
 from sqlmodel import Session, func, select
 
 from core.privacy.detectors import detect_all
+from core.privacy.detectors import detect
+from core.privacy.llm_redactor import detect_with_provider
 from storage.models import EntityMapping
 
 PLACEHOLDER_RE = re.compile(r"\[([A-Z_]+)_(\d+)\]")
@@ -75,7 +77,16 @@ def _get_or_create_placeholder(session: Session, org_id: str, entity_type: str, 
 
 
 def redact(text: str, org_id: str, session: Session) -> tuple[str, int]:
-    spans = detect_all(text)
+    # Provider mode replaces generic NER (which often mistakes product names
+    # for organizations) while retaining deterministic structured-PII checks.
+    spans = detect(text)
+    provider_spans = detect_with_provider(text)
+    if provider_spans:
+        claimed = [(span.start, span.end) for span in spans]
+        spans.extend(span for span in provider_spans if not any(span.start < end and start < span.end for start, end in claimed))
+        spans.sort(key=lambda span: span.start)
+    elif os.environ.get("REDACTION_LLM_ENABLED", "false").lower() != "true":
+        spans = detect_all(text)
     if not spans:
         return text, 0
 

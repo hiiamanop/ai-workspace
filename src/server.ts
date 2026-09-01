@@ -435,6 +435,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       openwebuiUrl: process.env.OPENWEBUI_URL ?? "http://open-webui:8080",
       adminEmail: openwebuiAdminEmail,
       adminPassword: openwebuiAdminPassword,
+      // Native OpenWebUI connections + the MADE routing Filter are the
+      // primary path. Enable the legacy direct-upstream Auto Pipe explicitly
+      // with ENABLE_AUTO_PIPE=true when a model lacks native tool calling.
+      enableAutoPipe: process.env.ENABLE_AUTO_PIPE === "true",
     });
   }
 }

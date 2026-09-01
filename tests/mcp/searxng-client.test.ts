@@ -98,3 +98,42 @@ test("callWebSearch() omits the answer field when there are no answers", async (
 
   assert.deepEqual(result, { results: [] });
 });
+
+test("callWebSearch() drops malformed result URLs so citations cannot be fabricated", async () => {
+  const fakeConnect = async () => ({
+    callTool: async () => JSON.stringify({ results: [
+      { title: "Good", url: "https://example.com", content: "ok" },
+      { title: "Missing URL", content: "not citable" },
+      { title: "Private scheme", url: "javascript:alert(1)", content: "not web" },
+    ] }),
+    close: async () => {},
+  });
+
+  const result = await callWebSearch("query", undefined, fakeConnect);
+  assert.deepEqual(result.results.map((item) => item.url), ["https://example.com"]);
+});
+
+test("callWebSearch() rejects blank queries before opening an MCP connection", async () => {
+  let connected = false;
+  const fakeConnect = async () => {
+    connected = true;
+    return { callTool: async () => JSON.stringify({ results: [] }), close: async () => {} };
+  };
+
+  await assert.rejects(() => callWebSearch("  ", undefined, fakeConnect), /query must not be empty/);
+  assert.equal(connected, false);
+});
+
+test("callWebSearch() caps excessive result requests", async () => {
+  let capturedArgs: Record<string, unknown> | undefined;
+  const fakeConnect = async () => ({
+    callTool: async (_name: string, args: Record<string, unknown>) => {
+      capturedArgs = args;
+      return JSON.stringify({ results: [] });
+    },
+    close: async () => {},
+  });
+
+  await callWebSearch("query", 999, fakeConnect);
+  assert.equal(capturedArgs?.num_results, 10);
+});

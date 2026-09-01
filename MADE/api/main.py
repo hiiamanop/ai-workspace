@@ -85,8 +85,8 @@ def warm_up_ner_model() -> None:
 
 @app.post("/classify", response_model=ClassifyResponse)
 def post_classify(request: ClassifyRequest) -> ClassifyResponse:
-    complexity_level, label, score = complexity.classify(request.text)
-    return ClassifyResponse(complexity=complexity_level, label=label, score=score)
+    result = complexity.classify_task(request.text)
+    return ClassifyResponse(**result)
 
 
 @app.get("/candidates")
@@ -118,6 +118,13 @@ def post_decide(request: DecideRequest) -> DecideResponse:
         estimated_context_tokens=request.task.estimated_context_tokens,
         complexity=request.task.complexity,
         redacted=request.task.redacted,
+        intent=request.task.intent,
+        needs_tools=request.task.needs_tools,
+        requested_tools=request.task.requested_tools,
+        operation=request.task.operation,
+        approval_granted=request.task.approval_granted,
+        run_id=request.task.run_id,
+        max_steps=request.task.max_steps,
     )
     org = Org(budget_remaining_usd=request.org.budget_remaining_usd, region=request.org.region)
     candidates = [
@@ -125,6 +132,9 @@ def post_decide(request: DecideRequest) -> DecideResponse:
             id=c.id, vendor=c.vendor, kind=c.kind,
             cost_per_1k_tokens=c.cost_per_1k_tokens, scores=c.scores,
             context_window_tokens=c.context_window_tokens,
+            capabilities=c.capabilities,
+            operation=c.operation,
+            connector_id=c.connector_id,
         )
         for c in request.candidates
     ]

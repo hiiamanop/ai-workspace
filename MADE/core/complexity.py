@@ -35,3 +35,42 @@ def classify(text: str) -> tuple[Literal["low", "high"], str, float]:
     score = float(result["score"])
     complexity: Literal["low", "high"] = "high" if label == "COMPLEX" else "low"
     return complexity, label, score
+
+
+def classify_task(text: str) -> dict:
+    """Return routing metadata without another LLM completion.
+
+    Complexity comes from the local classifier; intent and tool hints use a
+    small, deterministic vocabulary so the policy engine remains the final
+    authority.  This is intentionally conservative: uncertain prompts do not
+    receive a web tool recommendation.
+    """
+    complexity, label, score = classify(text)
+    normalized = text.casefold()
+    current_markers = ("terbaru", "hari ini", "today", "latest", "news", "berita", "harga", "price")
+    product_markers = ("produk", "product", "beli", "buy", "toko", "store", "marketplace", "link", "harga")
+    knowledge_markers = ("dokumen", "document", "file", "knowledge base", "pdf")
+    if any(marker in normalized for marker in product_markers):
+        intent = "product_research"
+    elif any(marker in normalized for marker in current_markers):
+        intent = "news_or_current_information"
+    elif any(marker in normalized for marker in knowledge_markers):
+        intent = "document_or_knowledge_search"
+    else:
+        intent = "general_question"
+
+    needs_tools = intent != "general_question"
+    tools = ["web_search"] if intent in ("product_research", "news_or_current_information") else []
+    if intent == "product_research" and any(marker in normalized for marker in ("exact", "spesifikasi", "specification", "verifikasi", "verify")):
+        tools.append("scrape")
+    if intent == "document_or_knowledge_search":
+        tools.append("knowledge_search")
+    return {
+        "intent": intent,
+        "complexity": complexity,
+        "needs_tools": needs_tools,
+        "tools": tools,
+        "confidence": score,
+        "label": label,
+        "score": score,
+    }

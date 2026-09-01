@@ -63,6 +63,9 @@ class Filter:
         self.valves = self.Valves()
 
     async def inlet(self, body: dict, __user__: dict = None) -> dict:
+        # Classify once per request so both model and tool policy decisions
+        # receive the same intent/complexity metadata.
+        complexity = await self._classify_complexity(body)
         if "auto" in (body.get("tool_ids") or []):
             body["tool_ids"] = await self._route_tools(body)
 
@@ -93,7 +96,6 @@ class Filter:
         if not brand_candidates:
             return body
 
-        complexity = await self._classify_complexity(body)
         try:
             selected = await self._call_made(brand_candidates, complexity, body)
             if selected and any(c["id"] == selected for c in brand_candidates):
@@ -105,6 +107,22 @@ class Filter:
         fallback_model = _cheapest_qualifying(brand_candidates)
         if fallback_model is not None:
             body["model"] = fallback_model
+        return body
+
+    async def outlet(self, body: dict, __user__: dict = None) -> dict:
+        """Repair common model table formatting before Open WebUI renders it.
+
+        Models occasionally put the first table header directly after prose
+        (or omit the leading pipe).  Open WebUI's Markdown renderer then treats
+        it as a paragraph.  Keep this narrowly scoped to lines followed by a
+        Markdown separator so ordinary prose containing ``|`` is untouched.
+        """
+        messages = body.get("messages") or []
+        for message in reversed(messages):
+            if message.get("role") != "assistant" or not isinstance(message.get("content"), str):
+                continue
+            message["content"] = _normalize_markdown_tables(message["content"])
+            break
         return body
 
     async def _route_tools(self, body: dict) -> list[str]:
@@ -166,6 +184,8 @@ class Filter:
 
     async def _call_made_tools(self, candidates: list[dict], body: dict) -> list[str]:
         estimated_tokens = sum(len(m.get("content", "")) for m in body.get("messages", [])) // 4
+        classification = body.get("_classification", {})
+        privacy = body.get("_privacy", {})
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -173,9 +193,13 @@ class Filter:
                 json={
                     "task": {
                         "type": "chat",
-                        # Hardcoded to "internal" — same documented scope limitation as model routing above.
-                        "data_classification": "internal",
+                        "data_classification": privacy.get("data_classification", "internal"),
                         "estimated_context_tokens": estimated_tokens,
+                        "complexity": classification.get("complexity", "medium"),
+                        "intent": classification.get("intent", "general_question"),
+                        "needs_tools": True,
+                        "requested_tools": classification.get("tools", []),
+                        "redacted": privacy.get("redacted", False),
                     },
                     "decision_kind": "tool_selection",
                     "candidates": candidates,
@@ -236,6 +260,9 @@ class Filter:
                 ) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
+                    # Keep richer classifier metadata internal to this Filter;
+                    # it is consumed by MADE and never sent to the provider.
+                    body["_classification"] = data
                     complexity = data.get("complexity")
                     return complexity if complexity in ("low", "medium", "high") else "medium"
         except Exception as err:
@@ -260,6 +287,13 @@ class Filter:
                     "business_risk": scores.get("business_risk", 0.5),
                 },
                 "context_window_tokens": scores.get("context_window_tokens"),
+                # Keep model capabilities in the MADE candidate contract so
+                # hard policy can reject a non-tool-capable route when the
+                # classifier says this task needs tools.
+                "capabilities": {
+                    "streaming": scores.get("streaming", True),
+                    "tool_calling": scores.get("tool_calling", True),
+                },
             })
 
         estimated_tokens = sum(len(m.get("content", "")) for m in body.get("messages", [])) // 4
@@ -269,6 +303,7 @@ class Filter:
         # Absent means either that Filter isn't installed or found nothing
         # sensitive — "internal"/not-redacted, same as before this existed.
         privacy = body.get("_privacy", {})
+        classification = body.get("_classification", {})
         data_classification = privacy.get("data_classification", "internal")
         redacted = privacy.get("redacted", False)
 
@@ -281,6 +316,9 @@ class Filter:
                         "data_classification": data_classification,
                         "estimated_context_tokens": estimated_tokens,
                         "complexity": complexity,
+                        "intent": classification.get("intent", "general_question"),
+                        "needs_tools": classification.get("needs_tools", False),
+                        "requested_tools": classification.get("tools", []),
                         "redacted": redacted,
                     },
                     "decision_kind": "model_selection",
@@ -310,3 +348,37 @@ def _cheapest_qualifying(brand_candidates: list[dict], min_quality: float = 0.4)
     qualifying = [(mid, s) for mid, s in scored if s.get("quality", 0) >= min_quality]
     pool = qualifying if qualifying else scored
     return min(pool, key=lambda pair: pair[1].get("cost_per_1k_tokens", 999))[0]
+
+
+def _normalize_markdown_tables(text: str) -> str:
+    """Make pipe tables parseable without changing their cell contents."""
+    # Some providers serialize Markdown with escaped pipes and a trailing
+    # backslash as a soft line break.  Decode only these Markdown escapes.
+    text = text.replace("\\|", "|").replace("\\\n", "\n")
+    lines = text.splitlines()
+    output: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        # A header may be glued to a preceding label, e.g. ``Title| A | B``.
+        separator_index = index + 1
+        if separator_index < len(lines) and _is_table_separator(lines[separator_index]):
+            first_pipe = line.find("|")
+            if first_pipe > 0 and line[:first_pipe].strip():
+                output.append(line[:first_pipe].rstrip())
+                line = line[first_pipe:]
+            if output and output[-1].strip():
+                output.append("")
+            if not line.lstrip().startswith("|"):
+                line = "| " + line.strip()
+            output.append(line)
+            index += 1
+            continue
+        output.append(line)
+        index += 1
+    return "\n".join(output)
+
+
+def _is_table_separator(line: str) -> bool:
+    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+    return len(cells) >= 2 and all(cell and set(cell) <= set("-: ") and "-" in cell for cell in cells)

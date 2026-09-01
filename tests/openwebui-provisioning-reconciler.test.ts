@@ -87,6 +87,24 @@ test("reconcileOnce() passes the shared key to the Auto Pipe provisioner", async
   assert.equal(autoCall?.openwebuiToken, "shared-key");
 });
 
+test("reconcileOnce() skips the legacy Auto Pipe when native mode is selected", async () => {
+  let autoCalled = false;
+  const ok = await reconcileOnce({
+    ...baseDeps,
+    enableAutoPipe: false,
+    provisionFilterFn: async () => ({ ok: true }),
+    provisionToolsFn: async () => ({ ok: true, actions: [] }),
+    provisionRedactionFilterFn: async () => ({ ok: true }),
+    provisionContentFn: async () => ({ ok: true, actions: [] }),
+    provisionAutoFn: async () => {
+      autoCalled = true;
+      return { ok: true };
+    },
+  });
+  assert.equal(ok, true);
+  assert.equal(autoCalled, false);
+});
+
 test("reconcileOnce() resolves false when only the redaction filter provisioner fails", async () => {
   const ok = await reconcileOnce({
     ...baseDeps,

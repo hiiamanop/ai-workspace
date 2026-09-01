@@ -7,9 +7,12 @@ test("AUTO_PIPE_SOURCE executes approved search before upstream completion", () 
   assert.match(AUTO_PIPE_SOURCE, /\/api\/web-search/);
   assert.match(AUTO_PIPE_SOURCE, /UPSTREAM_BASE_URL/);
   assert.match(AUTO_PIPE_SOURCE, /UPSTREAM_API_KEY/);
+  assert.match(AUTO_PIPE_SOURCE, /_complete_with_retry/);
+  assert.match(AUTO_PIPE_SOURCE, /UPSTREAM_RETRIES/);
+  assert.match(AUTO_PIPE_SOURCE, /No answer was generated without verified tool evidence/);
 });
 
-test("provisionAuto() updates the existing Auto Pipe with the shared token", async () => {
+test("provisionAuto() updates the existing Auto Pipe with the shared token and valves", async () => {
   const calls: string[] = [];
   const fetchFn: typeof fetch = async (url, init) => {
     const path = String(url);
@@ -22,7 +25,8 @@ test("provisionAuto() updates the existing Auto Pipe with the shared token", asy
       const body = JSON.parse(String(init?.body));
       assert.equal(body.id, "made_multimodal");
       assert.equal(body.type, "pipe");
-      assert.match(body.content, /_run_tools/);
+      assert.match(body.content, /_run_tool/);
+      assert.equal(body.valves.OPENWEBUI_TOKEN, "shared-key");
       return new Response(JSON.stringify({ id: "made_multimodal" }), { status: 200 });
     }
     throw new Error(`unexpected URL: ${path}`);

@@ -16,6 +16,13 @@ class Task(BaseModel):
     estimated_context_tokens: int = 0
     complexity: Literal["low", "medium", "high"] = "medium"
     redacted: bool = False
+    intent: str = "general_question"
+    needs_tools: bool = False
+    requested_tools: list[str] = []
+    operation: Literal["read", "draft", "create", "update", "delete", "publish", "send", "deploy"] = "read"
+    approval_granted: bool = False
+    run_id: str | None = None
+    max_steps: int = 20
 
 
 class Org(BaseModel):
@@ -30,6 +37,9 @@ class DecisionCandidate(BaseModel):
     cost_per_1k_tokens: float
     scores: dict[str, float]
     context_window_tokens: int | None = None
+    capabilities: dict[str, bool] | None = None
+    operation: Literal["read", "draft", "create", "update", "delete", "publish", "send", "deploy"] | None = None
+    connector_id: str | None = None
 
 
 class ExcludedCandidate(BaseModel):
@@ -76,6 +86,9 @@ def decide(
                 "vendor": candidate.vendor,
                 "cost_per_1k_tokens": candidate.cost_per_1k_tokens,
                 "context_window_tokens": candidate.context_window_tokens,
+                "capabilities": candidate.capabilities or {},
+                "operation": candidate.operation or task.operation,
+                "connector_id": candidate.connector_id,
             },
             "org": org.model_dump(),
         }

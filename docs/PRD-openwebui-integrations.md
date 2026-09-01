@@ -41,7 +41,7 @@ pattern, and what doesn't.
   so a Tool can't call Open WebUI's own per-user memories API on a
   specific user's behalf. Built as ai-workspace's own feature instead
   (`src/memory-store.ts`, a `memory` Tool with `remember`/`recall`
-  methods) — see `CLAUDE.md`'s "Why not proxy to Open WebUI's own
+  methods) — see `AGENTS.md`'s "Why not proxy to Open WebUI's own
   `memories.py`" note for the full reasoning.
 - **Audio STT/TTS** (`audio.py`, `AUDIO_STT_ENGINE`/`AUDIO_TTS_ENGINE`) —
   still not built: single-engine today, and unlike image generation

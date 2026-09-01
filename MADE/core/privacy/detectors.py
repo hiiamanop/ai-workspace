@@ -86,6 +86,7 @@ def detect(text: str) -> list[Span]:
     return spans
 
 
+# Keep NER coverage for names, organizations, and locations.
 _NER_LABELS = {"PERSON", "ORG", "GPE"}
 _nlp = None
 

@@ -1,30 +1,25 @@
 import type { CandidateIn } from "./types.ts";
 
-// ponytail: keep the allowlist static; the gateway catalog is not a trust boundary.
-const ANTIGRAVITY_MODELS = [
-  ["antigravity/gemini-2.5-flash-lite", 1_048_576, 0.55, 0.25],
-  ["antigravity/gemini-2.5-flash", 1_048_576, 0.7, 0.3],
-  ["antigravity/gemini-3.5-flash-extra-low", 1_048_576, 0.65, 0.25],
-  ["antigravity/gemini-3.5-flash-low", 1_048_576, 0.72, 0.3],
-  ["antigravity/gemini-3.1-flash-lite", 1_048_576, 0.7, 0.3],
-  ["antigravity/gemini-3.6-flash-high", 1_048_576, 0.85, 0.4],
-  ["antigravity/gpt-oss-120b-medium", 131_072, 0.78, 0.35],
-  ["antigravity/gemini-pro-agent", 1_048_576, 0.9, 0.45],
-  ["antigravity/gemini-3-flash-agent", 1_048_576, 0.82, 0.35],
-  ["antigravity/gemini-3.1-pro-low", 1_048_576, 0.88, 0.4],
-  ["antigravity/claude-sonnet-4-6", 1_048_576, 0.92, 0.45],
-  ["antigravity/gemini-3.6-flash-low", 1_048_576, 0.76, 0.3],
-  ["antigravity/gemini-3.6-flash-medium", 1_048_576, 0.82, 0.35],
-  ["antigravity/claude-opus-4-6-thinking", 1_048_576, 0.98, 0.6],
+// Keep this allowlist static: the gateway catalog is not a trust boundary.
+// These are the curated OmniRouter routes exposed to MADE. The fallback
+// remains available when a premium route is unavailable.
+const CURATED_MODELS = [
+  ["antigravity/gemini-2.5-flash-lite", 1_048_576, 0.55, 0.25, 0.001],
+  ["antigravity/gemini-2.5-flash", 1_048_576, 0.70, 0.30, 0.001],
+  ["antigravity/gpt-oss-120b-medium", 131_072, 0.78, 0.35, 0.001],
+  ["antigravity/gemini-3-flash-agent", 1_048_576, 0.82, 0.35, 0.001],
+  ["antigravity/gemini-3.1-pro-low", 1_048_576, 0.88, 0.40, 0.001],
+  ["antigravity/claude-sonnet-4-6", 200_000, 0.92, 0.45, 0.001],
+  ["antigravity/claude-opus-4-6-thinking", 200_000, 0.98, 0.60, 0.001],
 ] as const;
 
-// Minimax is the only fallback that passed live gateway verification.
 const FALLBACK_MODELS = [
-  ["openrouter/minimax/minimax-m3:free", 1_048_576, 0.7, 0.2],
+  ["openrouter/minimax/minimax-m3:free", 1_048_576, 0.70, 0.20, 0],
 ] as const;
 
-function modelCandidate([id, context, quality, risk]: readonly [string, number, number, number], fallback = false): CandidateIn {
-  const cost = fallback ? 0 : 0.001;
+type ModelSpec = readonly [id: string, context: number, quality: number, risk: number, cost: number];
+
+function modelCandidate([id, context, quality, risk, cost]: ModelSpec, fallback = false): CandidateIn {
   return {
     id,
     vendor: "omnirouter",
@@ -41,7 +36,13 @@ function modelCandidate([id, context, quality, risk]: readonly [string, number, 
 
 export function availableCandidates(env: NodeJS.ProcessEnv = process.env): CandidateIn[] {
   if (!env.OMNIROUTER_API_KEY) throw new Error("OMNIROUTER_API_KEY not set — no model candidates available");
-  return [...ANTIGRAVITY_MODELS.map((m) => modelCandidate(m)), ...FALLBACK_MODELS.map((m) => modelCandidate(m, true))];
+  const allowlist = env.OMNIROUTER_MODEL_ALLOWLIST
+    ?.split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  const specs: readonly ModelSpec[] = [...CURATED_MODELS, ...FALLBACK_MODELS];
+  const selected = allowlist?.length ? specs.filter(([id]) => allowlist.includes(id)) : specs;
+  return selected.map((spec) => modelCandidate(spec, spec[0] === FALLBACK_MODELS[0][0]));
 }
 
 export function availableToolCandidates(): CandidateIn[] {

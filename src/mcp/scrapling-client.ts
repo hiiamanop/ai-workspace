@@ -92,8 +92,24 @@ function truncateScrapeResult(text: string): string {
   return `${text.slice(0, MAX_SCRAPE_CHARS)}\n\n[... truncated, ${text.length - MAX_SCRAPE_CHARS} more characters omitted]`;
 }
 
-// Uses Scrapling's browser-rendered "fetch" tool (full page, not the raw
-// "get" tool) since our web_search tool already covers plain HTTP lookups.
+function normalizeScrapeResult(text: string): string {
+  try {
+    const parsed = JSON.parse(text) as { content?: unknown; url?: unknown; status?: unknown };
+    if (typeof parsed.content !== "undefined") {
+      return JSON.stringify({
+        status: parsed.status,
+        url: parsed.url,
+        content: parsed.content,
+      });
+    }
+  } catch {
+    // Some MCP servers return plain text; preserve that response unchanged.
+  }
+  return text;
+}
+
+// Uses Scrapling's browser-rendered fetch tool. The MCP server exposes this
+// as a read-only operation; callers still get a bounded, normalized result.
 export async function callScrape(
   url: string,
   connect: () => Promise<McpToolConnection> = defaultConnect
@@ -102,7 +118,7 @@ export async function callScrape(
   const connection = await connect();
   try {
     const result = await connection.callTool("fetch", { url });
-    return truncateScrapeResult(result);
+    return truncateScrapeResult(normalizeScrapeResult(result));
   } finally {
     await connection.close();
   }

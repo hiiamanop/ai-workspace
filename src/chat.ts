@@ -219,7 +219,12 @@ export async function handleChat(
 
     for (const [index, call] of result.toolCalls.entries()) {
       let toolResult: string;
-      if (call.function.name === "web_search") {
+      // Treat MADE's tool ranking as an allowlist, not merely a hint. A
+      // provider must not be able to bypass the policy by emitting a call for
+      // a tool that was not included in the request's approved definitions.
+      if (!allowedToolIds.has(call.function.name)) {
+        toolResult = `tool ${call.function.name} denied by policy`;
+      } else if (call.function.name === "web_search") {
         try {
           const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
           const maxResults = typeof args.maxResults === "number" ? args.maxResults : undefined;

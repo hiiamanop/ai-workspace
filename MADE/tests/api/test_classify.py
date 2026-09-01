@@ -16,4 +16,12 @@ def test_classify_endpoint_returns_complexity_label_and_score():
 
     assert response.status_code == 200
     body = response.json()
-    assert body == {"complexity": "high", "label": "COMPLEX", "score": 0.93}
+    assert body == {
+        "complexity": "high",
+        "label": "COMPLEX",
+        "score": 0.93,
+        "intent": "general_question",
+        "needs_tools": False,
+        "tools": [],
+        "confidence": 0.93,
+    }

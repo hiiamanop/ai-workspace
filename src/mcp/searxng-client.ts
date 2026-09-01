@@ -64,12 +64,23 @@ function parseSearxngJson(raw: string): WebSearchResponse {
   if (!Array.isArray(data.results)) {
     throw new Error("searxng response missing results array");
   }
-  const results: WebSearchResult[] = (data.results as RawSearxngResult[]).map((r) => ({
-    title: r.title ?? "",
-    url: r.url ?? "",
-    snippet: r.content ?? "",
-    ...(r.publishedDate ? { publishedDate: r.publishedDate } : {}),
-  }));
+  const results: WebSearchResult[] = (data.results as RawSearxngResult[])
+    .map((r) => ({
+      title: typeof r?.title === "string" ? r.title : "",
+      url: typeof r?.url === "string" ? r.url : "",
+      snippet: typeof r?.content === "string" ? r.content : "",
+      ...(typeof r?.publishedDate === "string" && r.publishedDate ? { publishedDate: r.publishedDate } : {}),
+    }))
+    // Citations must point to an actual web URL returned by the search
+    // provider. Never manufacture a placeholder URL for malformed results.
+    .filter((r) => {
+      try {
+        const parsed = new URL(r.url);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+      } catch {
+        return false;
+      }
+    });
   const answers = Array.isArray(data.answers) ? (data.answers as unknown[]).map(String) : [];
   return {
     results,
@@ -85,12 +96,19 @@ export async function callWebSearch(
   maxResults?: number,
   connect: () => Promise<McpToolConnection> = defaultConnect
 ): Promise<WebSearchResponse> {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) {
+    throw new Error("web search query must not be empty");
+  }
+  const normalizedMaxResults = maxResults === undefined
+    ? undefined
+    : Math.max(1, Math.min(10, Math.floor(maxResults)));
   const connection = await connect();
   try {
     const raw = await connection.callTool("searxng_web_search", {
-      query,
+      query: normalizedQuery,
       response_format: "json",
-      ...(maxResults !== undefined ? { num_results: maxResults } : {}),
+      ...(normalizedMaxResults !== undefined ? { num_results: normalizedMaxResults } : {}),
     });
     return parseSearxngJson(raw);
   } finally {

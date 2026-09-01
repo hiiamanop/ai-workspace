@@ -12,6 +12,13 @@ class TaskIn(BaseModel):
     # compliance.rego's external-vendor deny rule is the actual gate — this
     # flag is how a caller satisfies it, not a courtesy field it could skip.
     redacted: bool = False
+    intent: str = "general_question"
+    needs_tools: bool = False
+    requested_tools: list[str] = []
+    operation: Literal["read", "draft", "create", "update", "delete", "publish", "send", "deploy"] = "read"
+    approval_granted: bool = False
+    run_id: str | None = None
+    max_steps: int = 20
 
 
 class OrgIn(BaseModel):
@@ -30,6 +37,8 @@ class CandidateIn(BaseModel):
     capabilities: dict[str, bool] | None = None
     fallback: bool | None = None
     verified: bool | None = None
+    operation: Literal["read", "draft", "create", "update", "delete", "publish", "send", "deploy"] | None = None
+    connector_id: str | None = None
 
 
 class DecideRequest(BaseModel):
@@ -68,6 +77,10 @@ class ClassifyResponse(BaseModel):
     complexity: Literal["low", "medium", "high"]
     label: str
     score: float
+    intent: str = "general_question"
+    needs_tools: bool = False
+    tools: list[str] = []
+    confidence: float = 0.0
 
 
 class RedactRequest(BaseModel):
