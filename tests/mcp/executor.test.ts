@@ -34,3 +34,33 @@ test("executor applies timeout and concurrency limit", async () => {
   await assert.rejects(() => executor.call("fixture", "echo", { message: "y" }), /concurrency limit/);
   await assert.rejects(() => first, /timeout/);
 });
+
+test("external writes fail closed and are re-checked immediately before execution", async () => {
+  const registry = createConnectorRegistry([{ ...manifest, approvalRequiredCapabilities: [], destructiveCapabilities: ["write"] }]);
+  let calls = 0;
+  const denied = createMcpExecutor(registry, { connect: async () => connection({ ok: true }) });
+  await assert.rejects(() => denied.call("fixture", "write", {}, { operation: "update" }), /policy unavailable/);
+
+  const events: Record<string, unknown>[] = [];
+  const allowed = createMcpExecutor(registry, {
+    authorize: async (request) => ({ allowed: request.operation === "update", decision_id: "d-1", policy_version: "p-1" }),
+    audit: (event) => events.push(event),
+    connect: async () => { calls++; return connection({ ok: true }); },
+  });
+  assert.deepEqual(await allowed.call("fixture", "write", {}, { operation: "update", run_id: "run-1", idempotency_key: "key-1" }), { ok: true });
+  assert.deepEqual(await allowed.call("fixture", "write", {}, { operation: "update", run_id: "run-1", idempotency_key: "key-1" }), { ok: true });
+  assert.equal(calls, 1, "idempotency key must prevent duplicate external writes");
+  assert.equal(events.some((event) => event.type === "policy.recheck"), true);
+  assert.equal(events.some((event) => event.type === "mcp.result"), true);
+});
+
+test("policy denial prevents the MCP transport from being opened", async () => {
+  const registry = createConnectorRegistry([{ ...manifest, approvalRequiredCapabilities: [], destructiveCapabilities: ["write"] }]);
+  let opened = false;
+  const executor = createMcpExecutor(registry, {
+    authorize: async () => ({ allowed: false, reason: "budget exceeded" }),
+    connect: async () => { opened = true; return connection({ ok: true }); },
+  });
+  await assert.rejects(() => executor.call("fixture", "write", {}, { operation: "create" }), /budget exceeded/);
+  assert.equal(opened, false);
+});

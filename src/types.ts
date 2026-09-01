@@ -1,3 +1,5 @@
+export type ExternalOperation = "read" | "draft" | "create" | "update" | "delete" | "publish" | "send" | "deploy";
+
 export interface TaskIn {
   type: string;
   data_classification: "public" | "internal" | "confidential" | "restricted";
@@ -7,7 +9,7 @@ export interface TaskIn {
   needs_tools?: boolean;
   requested_tools?: string[];
   redacted?: boolean;
-  operation?: "read" | "draft" | "create" | "update" | "delete" | "publish" | "send" | "deploy";
+  operation?: ExternalOperation;
   approval_granted?: boolean;
   run_id?: string;
   max_steps?: number;
