@@ -8,10 +8,27 @@
 	import Database from '$lib/components/icons/Database.svelte';
 	import EyeSlash from '$lib/components/icons/EyeSlash.svelte';
 	import LockClosed from '$lib/components/icons/LockClosed.svelte';
-	type Status = 'ready' | 'preview';
+	import { onMount } from 'svelte';
+	type Status = 'ready' | 'degraded' | 'offline' | 'preview';
 	let activeView = 'overview';
 	let refreshedAt = new Date();
 	let refreshing = false;
+	let runtime: { services?: Array<{ id: string; status: Status }> } = {};
+	let runs: Array<{ run_id: string; workflow_id: string; status: string; intent: string | null; updated_at: string }> = [];
+	let approvals: Array<{ approval_id: string; capability: string; operation: string; reason: string }> = [];
+	let auditEvents: Array<{ event_id: string; event_type: string; outcome: string; occurred_at: string }> = [];
+	async function loadOperations() {
+		const [status, runResponse, approvalResponse, auditResponse] = await Promise.all([
+			fetch('/api/operations/status'), fetch('/api/operations/runs?limit=25'),
+			fetch('/api/operations/approvals?status=pending'), fetch('/api/operations/audit?limit=20')
+		]);
+		if (status.ok) runtime = await status.json();
+		if (runResponse.ok) runs = (await runResponse.json()).runs ?? [];
+		if (approvalResponse.ok) approvals = (await approvalResponse.json()).approvals ?? [];
+		if (auditResponse.ok) auditEvents = (await auditResponse.json()).events ?? [];
+		refreshedAt = new Date();
+	}
+	onMount(() => { void loadOperations(); });
 	const infrastructure = [
 		{ name: 'MADE policy engine', detail: 'Decisions & authorization', status: 'ready' as Status, metric: '99.9%', icon: LockClosed, href: '/workspace/policies' },
 		{ name: 'MCP runtime', detail: 'Registry & execution boundary', status: 'ready' as Status, metric: '0 connectors', icon: CommandLine, href: '/workspace/tools' },
@@ -22,20 +39,20 @@
 		{ id: 'overview', label: 'Overview' }, { id: 'runs', label: 'Workflow runs' },
 		{ id: 'approvals', label: 'Approvals', count: 0 }, { id: 'audit', label: 'Audit events' }
 	];
-	function refresh() { refreshing = true; setTimeout(() => { refreshedAt = new Date(); refreshing = false; }, 450); }
+	async function refresh() { refreshing = true; try { await loadOperations(); } finally { setTimeout(() => (refreshing = false), 250); } }
 </script>
 
 <svelte:head><title>Workspace / {$WEBUI_NAME}</title></svelte:head>
 <main class="hub-shell">
 	<section class="hero"><div><p class="eyebrow">ORCHESTRATION CONTROL PLANE</p><h1>Workspace<span class="dot">.</span></h1><p class="lede">Satu ruang untuk memantau policy, workflow, dan boundary MCP sebelum connector aplikasi diaktifkan.</p></div><div class="hero-actions"><div class="live"><span></span> Runtime operational</div><button class="refresh" on:click={refresh} disabled={refreshing}><ArrowPath className={refreshing ? 'spin' : ''} /> {refreshing ? 'Refreshing' : 'Refresh'}</button></div></section>
-	<section class="signals"><div><label>Policy decisions</label><strong>Ready</strong><small>MADE gate active</small></div><div><label>MCP connectors</label><strong>0</strong><small>Infrastructure only</small></div><div><label>Pending approvals</label><strong>0</strong><small>Nothing requires review</small></div><div><label>Last refresh</label><strong>{refreshedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</strong><small>Local runtime</small></div></section>
+	<section class="signals"><div><label>Policy decisions</label><strong>{runtime.services?.find((s) => s.id === 'made')?.status ?? 'Unknown'}</strong><small>MADE gate status</small></div><div><label>MCP connectors</label><strong>{runtime.services?.find((s) => s.id === 'mcp')?.status ?? '0'}</strong><small>Runtime status</small></div><div><label>Pending approvals</label><strong>{approvals.length}</strong><small>{approvals.length ? 'Requires review' : 'Nothing requires review'}</small></div><div><label>Last refresh</label><strong>{refreshedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</strong><small>Local runtime</small></div></section>
 	<section class="section-head"><div><p class="eyebrow">SYSTEM MAP</p><h2>Infrastructure status</h2></div><a href="/workspace/tools">Inspect tools <ArrowRight /></a></section>
 	<section class="infra-grid">{#each infrastructure as item}<a class="infra-card" href={item.href}><div class="card-top"><svelte:component this={item.icon} /><span class:preview={item.status === 'preview'} class="status"><i></i>{item.status}</span></div><h3>{item.name}</h3><p>{item.detail}</p><div class="card-foot"><b>{item.metric}</b><ArrowRight /></div></a>{/each}</section>
 	<section class="operations"><div class="section-head"><div><p class="eyebrow">OPERATIONS</p><h2>Observe the control loop</h2></div><span class="muted">Read-only workspace views</span></div><nav class="tabs" aria-label="Operations views">{#each views as view}<button class:active={activeView === view.id} on:click={() => (activeView = view.id)}>{view.label}{#if view.count !== undefined}<em>{view.count}</em>{/if}</button>{/each}</nav><div class="panel">
-		{#if activeView === 'overview'}<div class="empty"><ChartBar /><h3>Observability is ready</h3><p>Workflow metrics, latency, cost, and outcomes will populate this view as runs are persisted.</p></div>
-		{:else if activeView === 'runs'}<div class="empty"><Database /><h3>No workflow runs yet</h3><p>Runs will appear here when the orchestrator persistence layer is connected.</p></div>
-		{:else if activeView === 'approvals'}<div class="empty"><CheckCircle /><h3>Approval inbox clear</h3><p>External writes will appear here only after MADE requests approval.</p></div>
-		{:else}<div class="empty"><EyeSlash /><h3>Audit viewer ready</h3><p>Events are redacted before display and will populate after persistence is enabled.</p></div>{/if}
+		{#if activeView === 'overview'}<div class="empty"><ChartBar /><h3>Observability is ready</h3><p>{runs.length} workflow runs, {auditEvents.length} audit events, and {approvals.length} pending approvals.</p></div>
+		{:else if activeView === 'runs'}{#if runs.length}<div class="rows">{#each runs as run}<div class="row"><b>{run.intent ?? run.workflow_id}</b><span>{run.status}</span><small>{run.updated_at}</small></div>{/each}</div>{:else}<div class="empty"><Database /><h3>No workflow runs yet</h3><p>Runs will appear here when the orchestrator persists them.</p></div>{/if}
+		{:else if activeView === 'approvals'}{#if approvals.length}<div class="rows">{#each approvals as approval}<div class="row"><b>{approval.capability} / {approval.operation}</b><span>{approval.reason}</span></div>{/each}</div>{:else}<div class="empty"><CheckCircle /><h3>Approval inbox clear</h3><p>External writes will appear here only after MADE requests approval.</p></div>{/if}
+		{:else}{#if auditEvents.length}<div class="rows">{#each auditEvents as event}<div class="row"><b>{event.event_type}</b><span>{event.outcome}</span><small>{event.occurred_at}</small></div>{/each}</div>{:else}<div class="empty"><EyeSlash /><h3>Audit viewer ready</h3><p>Events are redacted before display and will populate after persistence is enabled.</p></div>{/if}{/if}
 	</div></section>
 </main>
 <style>

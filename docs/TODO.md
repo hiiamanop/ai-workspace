@@ -52,21 +52,21 @@ any application-specific connector yet.
 ## P1 — Workspace operations UI
 
 - [x] Replace Workspace model landing page with application/workflow hub.
-- [ ] Add connector infrastructure status cards.
-- [ ] Add MCP server health and capability inspection views.
-- [ ] Add workflow run history and run detail views.
-- [ ] Add approval inbox and approval detail view.
-- [ ] Add audit event viewer.
-- [ ] Add usage, latency, and cost summaries.
+- [x] Add connector infrastructure status cards.
+- [x] Add MCP server health and capability inspection views.
+- [x] Add workflow run history and run detail views.
+- [x] Add approval inbox and approval detail view.
+- [x] Add audit event viewer.
+- [x] Add usage, latency, and cost summaries.
 
 ## P1 — Reliability and security
 
-- [ ] Add authentication and authorization between internal services.
-- [ ] Add secret rotation and secret-manager integration boundary.
-- [ ] Add SSRF, private-network, payload-size, and URL validation guards.
-- [ ] Add per-user and per-organization rate limits.
-- [ ] Add restart recovery for running and waiting-approval workflows.
-- [ ] Add database migrations, backup, and restore runbook.
+- [x] Add authentication and authorization between internal services (shared boundary primitive; production proxy wiring remains deployment work).
+- [x] Add secret rotation and secret-manager integration boundary.
+- [x] Add SSRF, private-network, payload-size, and URL validation guards.
+- [x] Add per-user and per-organization rate limits (fixed-window primitive; shared-store wiring remains deployment work).
+- [x] Add restart recovery for running and waiting-approval workflows.
+- [x] Add database migrations, backup, and restore runbook.
 
 ## P2 — Agent runtime
 

@@ -13,6 +13,7 @@ import { startHealthMonitor } from "./openwebui-health-monitor.ts";
 import { startProvisioningReconciler } from "./openwebui-provisioning-reconciler.ts";
 import { compilePolicy, CompileError } from "./openwebui-policy-compiler.ts";
 import { draftPolicy } from "./policy-drafter.ts";
+import { defaultOperationsStore, type OperationsStore } from "./operations-store.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST_DIR = path.join(__dirname, "..", "client", "dist");
@@ -165,7 +166,8 @@ export function createServer(
   webSearchExecutorFn: (query: string, maxResults?: number) => Promise<WebSearchResponse> = callWebSearch,
   scrapeExecutorFn: (url: string) => Promise<string> = callScrape,
   rememberFn: (userId: string, fact: string) => MemoryEntry = remember,
-  recallFn: (userId: string, query: string) => MemoryEntry[] = recall
+  recallFn: (userId: string, query: string) => MemoryEntry[] = recall,
+  operations: OperationsStore = defaultOperationsStore
 ): http.Server {
   const server = http.createServer(async (req, res) => {
     try {
@@ -392,6 +394,24 @@ export function createServer(
         }
         return;
       }
+
+      const parsed = new URL(req.url ?? "/", "http://localhost");
+      const json = (value: unknown, code = 200) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
+      if (req.method === "GET" && parsed.pathname === "/api/operations/status") { json(operations.status()); return; }
+      if (req.method === "GET" && parsed.pathname === "/api/operations/runs") {
+        json(operations.listRuns(Number(parsed.searchParams.get("limit") ?? 25), parsed.searchParams.get("status") ?? undefined)); return;
+      }
+      if (req.method === "GET" && parsed.pathname.startsWith("/api/operations/runs/")) {
+        const run = operations.getRun(parsed.pathname.slice("/api/operations/runs/".length));
+        json(run ? { run } : { error: "run not found" }, run ? 200 : 404); return;
+      }
+      if (req.method === "GET" && parsed.pathname === "/api/operations/approvals") { json(operations.listApprovals(parsed.searchParams.get("status") ?? "pending")); return; }
+      if (req.method === "GET" && parsed.pathname === "/api/operations/audit") {
+        json(operations.listAudit(Number(parsed.searchParams.get("limit") ?? 50), { actor_id: parsed.searchParams.get("actor_id") ?? undefined, organization_id: parsed.searchParams.get("organization_id") ?? undefined, correlation_id: parsed.searchParams.get("correlation_id") ?? undefined })); return;
+      }
+      if (req.method === "GET" && parsed.pathname === "/api/operations/metrics") { json(operations.metrics() ?? { available: false }); return; }
+      if (req.method === "GET" && parsed.pathname === "/api/operations/connectors") { const value = operations.connectors(); json(value ? { connectors: value.list() } : { connectors: [] }); return; }
+      if (req.method === "GET" && parsed.pathname === "/api/operations/connectors/readiness") { const value = operations.connectors(); json(value ? await value.readiness() : { ready: false, connectors: [] }); return; }
 
       if (req.method === "GET") {
         const pathname = new URL(req.url ?? "/", "http://localhost").pathname;

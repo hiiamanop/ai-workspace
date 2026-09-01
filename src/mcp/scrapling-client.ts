@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { McpToolConnection } from "./searxng-client.ts";
+import { assertPublicHttpUrl } from "../security/guards.ts";
 
 async function defaultConnect(): Promise<McpToolConnection> {
   const scraplingUrl = process.env.SCRAPLING_URL ?? "http://scrapling:8000/mcp";
@@ -26,57 +27,9 @@ async function defaultConnect(): Promise<McpToolConnection> {
   };
 }
 
-const BLOCKED_HOSTNAMES = new Set([
-  "searxng",
-  "scrapling",
-  "made",
-  "host.docker.internal",
-  "localhost",
-  "metadata.google.internal",
-  "metadata",
-  "instance-data",
-]);
-
-function isPrivateIPv4(hostname: string): boolean {
-  const match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!match) {
-    return false;
-  }
-  const a = Number(match[1]);
-  const b = Number(match[2]);
-  if (a === 0) return true;
-  if (a === 127) return true;
-  if (a === 10) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  return false;
-}
-
 function assertUrlAllowed(url: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(`scrape refused: "${url}" is not a valid URL`);
-  }
-
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error(`scrape refused: unsupported scheme "${parsed.protocol}"`);
-  }
-
-  const hostname = parsed.hostname.toLowerCase();
-
-  // ponytail: blocks all IPv6 literals rather than parsing private ranges —
-  // revisit with proper IPv6 range checks only if a real need to scrape an
-  // IPv6-literal URL shows up. Legitimate scrape targets are domain names.
-  if (hostname.startsWith("[")) {
-    throw new Error("scrape refused: IPv6 literal hosts are not allowed");
-  }
-
-  if (BLOCKED_HOSTNAMES.has(hostname) || isPrivateIPv4(hostname)) {
-    throw new Error("scrape refused: URL targets an internal/private host");
-  }
+  try { assertPublicHttpUrl(url, "scrape URL"); }
+  catch (error) { throw new Error(`scrape refused: ${(error as Error).message}`); }
 }
 
 // ponytail: a full rendered page can be tens of thousands of tokens of
