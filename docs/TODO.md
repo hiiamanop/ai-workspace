@@ -90,7 +90,7 @@ any application-specific connector yet.
 - [x] Add MADE baseline evaluation for cost, quality, latency, denial, and approval.
 - [x] Add failure-injection scenarios for model, policy, transport, and connector failures.
 - [x] Update PRD and architecture docs after runtime contracts stabilize.
-- [ ] Rewrite the final system design only after the preceding runtime work is complete.
+- [ ] Apply the final UI redesign according to `docs/DESIGN_SYSTEM.md` after runtime contracts are stable.
 
 ## Explicit non-goals for this phase
 
