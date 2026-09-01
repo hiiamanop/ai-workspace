@@ -84,6 +84,7 @@ class Pipe:
             if not calls:
                 content = message.get("content") or ""
                 if content:
+                    content = self._sanitize_citations(content, messages)
                     await self._status(emitter, "", True)
                     async for chunk in self._stream_text(content):
                         yield chunk
@@ -117,6 +118,7 @@ class Pipe:
         except Exception as error:
             print("Auto final completion failed after retries:", error)
             content = "The research model became unavailable before it could produce the final answer."
+        content = self._sanitize_citations(content, messages)
         await self._status(emitter, "", True)
         async for chunk in self._stream_text(content):
             yield chunk
@@ -142,6 +144,40 @@ class Pipe:
             if arguments:
                 calls.append({"id": "legacy_" + str(len(calls)), "function": {"name": name.lower(), "arguments": json.dumps(arguments)}})
         return calls
+
+    @staticmethod
+    def _sanitize_citations(content: str, messages: list[dict]) -> str:
+        """Remove invented/search-page citations; retain only tool evidence URLs.
+
+        Search results are useful leads, but product answers should cite a
+        verified detail page. A URL is considered verified when it was returned
+        by search and is not itself a search/list page, or when Scrapling
+        fetched it successfully. This prevents the model from fabricating
+        plausible-looking links that later return 404.
+        """
+        verified = set()
+        for message in messages:
+            if message.get("role") != "tool":
+                continue
+            try:
+                data = json.loads(str(message.get("content", "")))
+            except Exception:
+                continue
+            if message.get("name") == "web_search":
+                for item in data.get("results", []) if isinstance(data, dict) else []:
+                    url = str(item.get("url", "")) if isinstance(item, dict) else ""
+                    if url and not re.search(r"/(search|s\?|search\?|results?)(/|\?|$)|[?&](q|query|search|keyword)=", url, re.I):
+                        verified.add(url.rstrip("/"))
+            elif message.get("name") == "scrape" and isinstance(data, dict):
+                status = data.get("status")
+                if str(status).isdigit() and 200 <= int(status) < 400:
+                    verified.add(str(data.get("url", "")).rstrip("/"))
+        if not verified:
+            return re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"\1", content)
+        def replace_link(match):
+            label, url = match.group(1), match.group(2)
+            return match.group(0) if url.rstrip("/") in verified else label
+        return re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", replace_link, content)
 
     @staticmethod
     def _tool(name: str, description: str, properties: dict) -> dict:
