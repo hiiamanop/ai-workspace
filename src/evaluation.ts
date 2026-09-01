@@ -1,6 +1,21 @@
 export interface EvaluationCase<I = unknown, O = unknown> { id: string; input: I; expected: O; run: (input: I) => Promise<O> | O; equal?: (actual: O, expected: O) => boolean; }
 export interface EvaluationReport { total: number; passed: number; failed: number; cases: Array<{ id: string; passed: boolean; error?: string }>; }
 
+export interface FailureScenario { id: string; run: () => Promise<unknown> | unknown; expectedError?: RegExp; }
+
+/** Exercise model/policy/transport/connector failure paths without network calls. */
+export async function evaluateFailureScenarios(scenarios: FailureScenario[]): Promise<EvaluationReport> {
+  return evaluateCases(scenarios.map((scenario) => ({
+    id: scenario.id,
+    input: undefined,
+    expected: true,
+    run: async () => {
+      try { await scenario.run(); return false; }
+      catch (error) { return !scenario.expectedError || scenario.expectedError.test(error instanceof Error ? error.message : String(error)); }
+    },
+  })));
+}
+
 /** Deterministic, dependency-free evaluator for workflow/MCP contract fixtures. */
 export async function evaluateCases<I, O>(cases: Array<EvaluationCase<I, O>>): Promise<EvaluationReport> {
   const results = [] as EvaluationReport["cases"];
