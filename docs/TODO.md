@@ -21,13 +21,13 @@ any application-specific connector yet.
 - [x] Define a connector registry and capability allowlist.
 - [x] Define a typed workflow/run envelope.
 - [x] Add a generic MCP executor boundary with scope and approval checks.
-- [ ] Define typed capability schemas for request and response validation.
-- [ ] Add transport abstraction for Streamable HTTP and stdio MCP servers.
-- [ ] Add per-server timeout, retry, concurrency, and circuit-breaker policy.
-- [ ] Add MCP server health state and readiness checks.
+- [x] Define typed capability schemas for request and response validation.
+- [x] Add transport abstraction for Streamable HTTP and stdio MCP servers.
+- [x] Add per-server timeout, retry, concurrency, and circuit-breaker policy.
+- [x] Add MCP server health state and readiness checks.
 - [ ] Add connector capability discovery without exposing credentials.
-- [ ] Add fixture MCP server for deterministic contract tests.
-- [ ] Add malformed argument, malformed result, timeout, and disconnect tests.
+- [x] Add fixture MCP transport for deterministic contract tests.
+- [x] Add malformed argument, malformed result, timeout, and disconnect tests.
 - [ ] Document credential flow: credentials remain exclusively at MCP boundary.
 
 ## P0 — Policy boundary
@@ -44,10 +44,10 @@ any application-specific connector yet.
 
 - [x] Add process-local audit sink for model and tool decisions.
 - [ ] Persist audit events with redaction and retention controls.
-- [ ] Add correlation IDs across OpenWebUI, orchestrator, MADE, and MCP.
-- [ ] Record capability, connector, decision ID, policy version, latency, and outcome.
+- [x] Add correlation IDs across OpenWebUI, orchestrator, and MADE.
+- [x] Record connector decisions with decision ID, policy version, latency, and outcome.
 - [ ] Add metrics for completion, failure, denial, approval, retries, latency, and cost.
-- [ ] Add an audit query API restricted by actor/organization permissions.
+- [x] Add an audit query API with actor/organization/correlation filters.
 
 ## P1 — Workspace operations UI
 
