@@ -9,6 +9,7 @@ import { estimateContextTokens } from "./token-estimate.ts";
 import { ensureCandidateFits } from "./context-guard.ts";
 import { trimHistory } from "./history-budget.ts";
 import type { CandidateIn, ChatMessage, CompletionResult, DecideRequest, DecideResponse, ToolDef } from "./types.ts";
+import { defaultAuditSink, type AuditSink } from "./audit-log.ts";
 
 const MAX_TOOL_ITERATIONS = 5;
 const MAX_TOOL_RESULT_CHARS = 8000;
@@ -42,6 +43,7 @@ export interface ChatDeps {
   completeStreamByProvider?: Record<string, StreamCompleteFn>;
   toolExecutors: Record<string, ToolExecutor>;
   webSearchExecutor: (query: string, maxResults?: number) => Promise<WebSearchResponse>;
+  audit?: AuditSink;
 }
 
 const defaultDeps: ChatDeps = {
@@ -58,6 +60,7 @@ const defaultDeps: ChatDeps = {
     scrape: (args) => callScrape(String(args.url)),
   },
   webSearchExecutor: (query, maxResults) => callWebSearch(query, maxResults),
+  audit: defaultAuditSink,
 };
 
 function decideRequest(
@@ -111,6 +114,7 @@ export async function handleChat(
     if (!candidate) {
       throw new Error(`MADE selected unknown candidate id ${decision.selected_candidate_id}`);
     }
+    deps.audit?.record({ type: "model_selection", outcome: "allowed", model_id: candidate.id, metadata: { decision_id: decision.decision_id } });
     return candidate;
   };
 
@@ -218,6 +222,7 @@ export async function handleChat(
     messages.push({ role: "assistant", content: result.content, tool_calls: result.toolCalls });
 
     for (const [index, call] of result.toolCalls.entries()) {
+      deps.audit?.record({ type: "tool_call", outcome: "started", tool_name: call.function.name, metadata: { iteration: i } });
       let toolResult: string;
       // Treat MADE's tool ranking as an allowlist, not merely a hint. A
       // provider must not be able to bypass the policy by emitting a call for
@@ -252,6 +257,7 @@ export async function handleChat(
         }
       }
       streamCallbacks?.onToolResult(index, call.function.name, toolResult);
+      deps.audit?.record({ type: "tool_call", outcome: toolResult.includes(" failed:") || toolResult.includes(" denied") ? "failed" : "completed", tool_name: call.function.name });
       messages.push({ role: "tool", content: truncateToolResult(toolResult), tool_call_id: call.id, name: call.function.name });
     }
   }

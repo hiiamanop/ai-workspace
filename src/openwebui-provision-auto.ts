@@ -128,7 +128,7 @@ class Pipe:
             yield content[index:index + chunk_size]
             # A tiny yield interval lets Open WebUI paint each chunk instead of
             # coalescing the whole answer into one visual update.
-            await asyncio.sleep(0.03)
+            await asyncio.sleep(0.08)
 
     @staticmethod
     def _parse_legacy_calls(content: str) -> list[dict]:
