@@ -100,3 +100,45 @@ def test_deploy_deny_only_policy_ok_alongside_base_rego(tmp_path, monkeypatch):
     )
     assert response.status_code == 200
     assert (policies_root / "hard" / "budget-002.rego").exists()
+
+
+def test_simulate_policy_is_read_only_and_reports_digest(tmp_path, monkeypatch):
+    client, policies_root = _client(tmp_path, monkeypatch)
+    response = client.post(
+        "/api/policies/simulate",
+        json={"policy_id": "budget-preview", "rego_content": VALID_REGO},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is True
+    assert body["would_change"] is True
+    assert len(body["proposed_sha256"]) == 64
+    assert not (policies_root / "hard" / "budget-preview.rego").exists()
+
+
+def test_simulate_rejects_conflicting_policy_without_writing(tmp_path, monkeypatch):
+    client, policies_root = _client(tmp_path, monkeypatch)
+    response = client.post(
+        "/api/policies/simulate",
+        json={"policy_id": "conflict", "rego_content": CONFLICTING_REGO},
+    )
+    assert response.status_code == 200
+    assert response.json()["valid"] is False
+    assert any("rego invalid" in error for error in response.json()["errors"])
+    assert not (policies_root / "hard" / "conflict.rego").exists()
+
+
+def test_policy_diff_is_deterministic_and_read_only(tmp_path, monkeypatch):
+    client, policies_root = _client(tmp_path, monkeypatch)
+    (policies_root / "hard" / "existing.rego").write_text("package made.hard\n\ndeny[reason] {\n reason := \"old\"\n}\n")
+    response = client.post(
+        "/api/policies/diff",
+        json={"policy_id": "existing", "rego_content": "package made.hard\n\ndeny[reason] {\n reason := \"new\"\n}\n"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["changed"] is True
+    assert body["lines_added"] == 1
+    assert body["lines_removed"] == 1
+    assert "existing.rego (installed)" in body["diff"]
+    assert (policies_root / "hard" / "existing.rego").read_text().find('"old"') >= 0

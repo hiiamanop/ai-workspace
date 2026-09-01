@@ -9,7 +9,7 @@ any application-specific connector yet.
 ## P0 — Workflow foundation
 
 - [x] Define the orchestrator run state machine (`queued`, `running`, `waiting_approval`, `completed`, `failed`, `cancelled`).
-- [ ] Persist `workflow_id`, `run_id`, actor, intent, classification, policy decision, and timestamps.
+- [x] Persist `workflow_id`, `run_id`, actor, intent, classification, policy decision, and timestamps.
 - [x] Enforce maximum steps, timeout, retries, token budget, and cost budget in one runtime guard.
 - [x] Add cancellation, resume, and retry semantics with idempotent run transitions.
 - [x] Add structured workflow errors and a final verification stage.
@@ -25,20 +25,20 @@ any application-specific connector yet.
 - [x] Add transport abstraction for Streamable HTTP and stdio MCP servers.
 - [x] Add per-server timeout, retry, concurrency, and circuit-breaker policy.
 - [x] Add MCP server health state and readiness checks.
-- [ ] Add connector capability discovery without exposing credentials.
+- [x] Add connector capability discovery without exposing credentials.
 - [x] Add fixture MCP transport for deterministic contract tests.
 - [x] Add malformed argument, malformed result, timeout, and disconnect tests.
-- [ ] Document credential flow: credentials remain exclusively at MCP boundary.
+- [x] Document credential flow: credentials remain exclusively at MCP boundary.
 
 ## P0 — Policy boundary
 
 - [x] Define policy input for actor, organization, data classification, operation, connector, and capability.
 - [x] Separate classifier hints from MADE authorization decisions.
-- [ ] Re-check MADE before every external write or destructive capability.
+- [x] Re-check MADE before every external write or destructive capability.
 - [x] Enforce approval, scope, budget, and max-step decisions in the executor.
 - [x] Add policy decision IDs and policy versions to decision/audit records.
-- [ ] Add policy simulation and policy diff checks before deployment.
-- [ ] Add deny-by-default behavior when MADE or policy service is unavailable.
+- [x] Add policy simulation and policy diff checks before deployment.
+- [x] Add deny-by-default behavior when MADE or policy service is unavailable.
 
 ## P1 — Audit and observability
 
@@ -46,7 +46,7 @@ any application-specific connector yet.
 - [x] Persist audit events with redaction-safe metadata.
 - [x] Add correlation IDs across OpenWebUI, orchestrator, and MADE.
 - [x] Record connector decisions with decision ID, policy version, latency, and outcome.
-- [ ] Add metrics for completion, failure, denial, approval, retries, latency, and cost.
+- [x] Add metrics for completion, failure, denial, approval, retries, latency, and cost.
 - [x] Add an audit query API with actor/organization/correlation filters.
 
 ## P1 — Workspace operations UI

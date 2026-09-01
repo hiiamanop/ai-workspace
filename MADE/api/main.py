@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import uuid
 import time
+import difflib
+import hashlib
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -21,6 +23,8 @@ from api.schemas import (
     ExperimentRunRequest,
     ExperimentRunResponse,
     PolicyDeployRequest,
+    PolicyDiffRequest,
+    PolicySimulationRequest,
     RankingEntryOut,
     RedactRequest,
     RedactResponse,
@@ -233,6 +237,86 @@ def get_audit_events(
 POLICY_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
 
+def _validate_policy_content(policy_id: str, rego_content: str) -> list[str]:
+    """Compile a proposed policy with the complete active policy set.
+
+    This function is deliberately side-effect free.  It is shared by the
+    simulation and deploy endpoints so a policy cannot pass a preview and
+    fail (or behave differently) during deployment.
+    """
+    if not POLICY_ID_RE.match(policy_id) or policy_id.endswith("_test"):
+        return [f"invalid policy_id '{policy_id}'"]
+    hard_dir = POLICIES_ROOT / "hard"
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, f"{policy_id}.rego").write_text(rego_content)
+        if hard_dir.exists():
+            for existing in hard_dir.glob("*.rego"):
+                if existing.name != f"{policy_id}.rego":
+                    shutil.copy2(existing, Path(tmp, existing.name))
+        try:
+            proc = subprocess.run(
+                ["opa", "check", "--format", "json", tmp],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            return [f"policy engine unavailable: {exc}"]
+        if proc.returncode == 0:
+            return []
+        try:
+            errors = json.loads(proc.stdout).get("errors", [])
+            message = "; ".join(
+                f"{e.get('file')}:{e.get('location', {}).get('row')}: {e.get('message')}"
+                for e in errors
+            )
+        except Exception:
+            message = proc.stderr.strip() or proc.stdout.strip()
+        return [f"rego invalid: {message}"]
+
+
+def _policy_text(policy_id: str) -> str:
+    path = POLICIES_ROOT / "hard" / f"{policy_id}.rego"
+    return path.read_text() if path.is_file() else ""
+
+
+@app.post("/api/policies/simulate")
+def simulate_policy(request: PolicySimulationRequest) -> dict:
+    """Validate a policy without installing it.
+
+    The response is safe to show in an approval UI: it contains validation
+    status, affected file identity and a stable content digest, never policy
+    secrets beyond the caller-provided Rego itself.
+    """
+    errors = _validate_policy_content(request.policy_id, request.rego_content)
+    return {
+        "policy_id": request.policy_id,
+        "valid": not errors,
+        "errors": errors,
+        "would_change": _policy_text(request.policy_id) != request.rego_content,
+        "proposed_sha256": hashlib.sha256(request.rego_content.encode()).hexdigest(),
+        "policy_version": _policy_version(POLICIES_ROOT),
+    }
+
+
+@app.post("/api/policies/diff")
+def diff_policy(request: PolicyDiffRequest) -> dict:
+    """Return a deterministic, read-only unified diff for a policy change."""
+    current = _policy_text(request.policy_id).splitlines(keepends=True)
+    proposed = request.rego_content.splitlines(keepends=True)
+    diff = "".join(difflib.unified_diff(
+        current, proposed,
+        fromfile=f"{request.policy_id}.rego (installed)",
+        tofile=f"{request.policy_id}.rego (proposed)",
+    ))
+    return {
+        "policy_id": request.policy_id,
+        "exists": bool(current),
+        "changed": current != proposed,
+        "lines_added": sum(1 for line in difflib.ndiff(current, proposed) if line.startswith("+ ")),
+        "lines_removed": sum(1 for line in difflib.ndiff(current, proposed) if line.startswith("- ")),
+        "diff": diff,
+    }
+
+
 @app.post("/api/policies/deploy")
 def deploy_policy(request: PolicyDeployRequest) -> dict:
     """Validate a Rego policy against OPA and atomically install it.
@@ -240,40 +324,12 @@ def deploy_policy(request: PolicyDeployRequest) -> dict:
     The new file is picked up by the next /decide call (policies are read
     from disk per evaluation), so a deployed policy is live immediately.
     """
-    if not POLICY_ID_RE.match(request.policy_id) or request.policy_id.endswith("_test"):
-        raise HTTPException(status_code=400, detail=f"invalid policy_id '{request.policy_id}'")
+    errors = _validate_policy_content(request.policy_id, request.rego_content)
+    if errors:
+        status = 503 if errors[0].startswith("policy engine unavailable") else 400
+        raise HTTPException(status_code=status, detail="; ".join(errors))
 
-    # Validate with OPA before touching the policies directory. The new file
-    # must be checked together with the EXISTING policy set — an isolated
-    # check can't see cross-file conflicts (e.g. a second `default allow`
-    # next to base.rego breaks every /decide call; the C1 review caught this).
     hard_dir = POLICIES_ROOT / "hard"
-    with tempfile.TemporaryDirectory() as tmp:
-        Path(tmp, f"{request.policy_id}.rego").write_text(request.rego_content)
-        if hard_dir.exists():
-            for existing in hard_dir.glob("*.rego"):
-                if existing.name != f"{request.policy_id}.rego":
-                    shutil.copy2(existing, Path(tmp, existing.name))
-        try:
-            proc = subprocess.run(
-                ["opa", "check", "--format", "json", tmp],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-            raise HTTPException(status_code=503, detail=f"policy engine unavailable: {exc}") from exc
-
-        if proc.returncode != 0:
-            try:
-                errors = json.loads(proc.stdout).get("errors", [])
-                msg = "; ".join(
-                    f"{e.get('file')}:{e.get('location', {}).get('row')}: {e.get('message')}" for e in errors
-                )
-            except Exception:
-                msg = proc.stderr.strip() or proc.stdout.strip()
-            raise HTTPException(status_code=400, detail=f"rego invalid: {msg}")
-
     hard_dir.mkdir(parents=True, exist_ok=True)
     target = hard_dir / f"{request.policy_id}.rego"
     tmp_target = target.with_suffix(".rego.tmp")

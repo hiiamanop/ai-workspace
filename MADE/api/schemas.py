@@ -111,6 +111,21 @@ class PolicyDeployRequest(BaseModel):
     rego_content: str
 
 
+class PolicySimulationRequest(BaseModel):
+    """Read-only policy validation request.
+
+    The proposed policy is evaluated together with the currently installed
+    policy set, but is never written to disk.
+    """
+    policy_id: str
+    rego_content: str
+
+
+class PolicyDiffRequest(BaseModel):
+    policy_id: str
+    rego_content: str
+
+
 class ExperimentRunRequest(BaseModel):
     scenario_dataset_version: str = "v1"
 
