@@ -73,8 +73,8 @@ any application-specific connector yet.
 - [x] Define manager-agent and specialist-agent contracts.
 - [x] Restrict specialist context and capabilities to an approved manifest.
 - [x] Add typed handoff envelope and verifier contract (synthesizer execution remains).
-- [ ] Add bounded multi-agent execution only after single-agent workflows pass evaluation.
-- [ ] Add agent-level cost, latency, and policy metrics.
+- [x] Add bounded multi-agent execution only after single-agent workflows pass evaluation.
+- [x] Add agent-level cost, latency, and policy metrics.
 
 ## P2 — Controlled external actions
 

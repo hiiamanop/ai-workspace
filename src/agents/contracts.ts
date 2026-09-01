@@ -45,7 +45,7 @@ export function validateHandoff<T>(handoff: AgentHandoff<T>, parent: AgentManife
   if (handoff.expires_at && Date.parse(handoff.expires_at) <= Date.now()) throw new Error("handoff has expired");
 }
 
-export function verifyAgentResult<T>(result: AgentResult<T>, handoff: AgentHandoff<T>): AgentResult<T> {
+export function verifyAgentResult<I, O>(result: AgentResult<O>, handoff: AgentHandoff<I>): AgentResult<O> {
   if (result.handoff_id !== handoff.handoff_id) throw new Error("agent result does not match handoff");
   if (result.status === "completed" && result.output === undefined) throw new Error("completed agent result requires output");
   return result;

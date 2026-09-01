@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHandoff, validateHandoff, verifyAgentResult } from "../src/agents/contracts.ts";
 import { createControlledAction } from "../src/controlled-actions.ts";
 import { evaluateCases, failureInjector } from "../src/evaluation.ts";
+import { runBoundedSpecialists } from "../src/agents/runtime.ts";
 
 test("agent handoff is restricted to manifest capabilities and classification", () => {
   const manager = { id: "manager", role: "manager" as const, version: "1", capabilities: [], allowedDataClassifications: ["internal"] as const, maxSteps: 10 };
@@ -29,4 +30,13 @@ test("evaluation and deterministic failure injection produce stable reports", as
   const report = await evaluateCases([{ id: "ok", input: 2, expected: 4, run: fn }, { id: "failure", input: 3, expected: 6, run: fn }]);
   assert.deepEqual({ total: report.total, passed: report.passed, failed: report.failed }, { total: 2, passed: 1, failed: 1 });
   void calls;
+});
+
+test("bounded runtime executes only approved specialist tasks", async () => {
+  const manager = { id: "manager", role: "manager" as const, version: "1", capabilities: ["delegate"], allowedDataClassifications: ["internal"], maxSteps: 3 };
+  const specialist = { id: "search", role: "specialist" as const, version: "1", capabilities: ["search"], allowedDataClassifications: ["internal"], maxSteps: 2 };
+  const handoff = createHandoff({ run_id: "r1", parent_agent_id: manager.id, specialist_agent_id: specialist.id, capability: "search", input: "x", data_classification: "internal" });
+  const results = await runBoundedSpecialists(manager, [{ handoff, specialist }], async ({ handoff }) => ({ handoff_id: handoff.handoff_id, agent_id: specialist.id, status: "completed" as const, output: ["ok"], completed_at: new Date().toISOString() }));
+  assert.equal(results.length, 1);
+  await assert.rejects(() => runBoundedSpecialists(manager, [{ handoff, specialist }, { handoff, specialist }], async () => { throw new Error("not reached"); }, { max_agents: 1 }), /agent limit/);
 });
