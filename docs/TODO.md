@@ -70,23 +70,23 @@ any application-specific connector yet.
 
 ## P2 — Agent runtime
 
-- [ ] Define manager-agent and specialist-agent contracts.
-- [ ] Restrict specialist context and capabilities to an approved manifest.
-- [ ] Add typed handoff envelope and verifier/synthesizer stages.
+- [x] Define manager-agent and specialist-agent contracts.
+- [x] Restrict specialist context and capabilities to an approved manifest.
+- [x] Add typed handoff envelope and verifier contract (synthesizer execution remains).
 - [ ] Add bounded multi-agent execution only after single-agent workflows pass evaluation.
 - [ ] Add agent-level cost, latency, and policy metrics.
 
 ## P2 — Controlled external actions
 
-- [ ] Define read, draft, create, update, delete, publish, send, and deploy operation semantics.
-- [ ] Add explicit approval gates for external side effects.
-- [ ] Add idempotency keys and duplicate-execution protection.
-- [ ] Add post-action verification and compensating-action metadata.
-- [ ] Add dry-run mode for every write-capable workflow.
+- [x] Define read, draft, create, update, delete, publish, send, and deploy operation semantics.
+- [x] Add explicit approval gates for external side effects.
+- [x] Add idempotency keys and duplicate-execution protection.
+- [x] Add post-action verification and compensating-action metadata.
+- [x] Add dry-run mode for every write-capable workflow.
 
 ## P2 — Evaluation and documentation
 
-- [ ] Build deterministic workflow and MCP contract test suite.
+- [x] Build deterministic workflow and MCP contract test suite.
 - [ ] Add MADE baseline evaluation for cost, quality, latency, denial, and approval.
 - [ ] Add failure-injection scenarios for model, policy, transport, and connector failures.
 - [ ] Update PRD and architecture docs after runtime contracts stabilize.
